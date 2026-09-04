@@ -5,7 +5,6 @@ import { IconCheck, IconMaximize, IconMinimize, IconPen, IconTrash } from "../ui
 
 const FONT_CYCLE: NoteFont[] = ["caveat", "kalam", "patrick-hand", "shadows", "indie", "architects"];
 const INK_CYCLE: NoteInk[] = ["blue", "red", "pencil"];
-/** size factor per hand, so each face reads at a comparable scale */
 const SIZE_FACTOR: Record<NoteFont, number> = {
   caveat: 1.25,
   kalam: 0.94,
@@ -20,7 +19,6 @@ interface Props {
   snippet?: string;
   onPatch: (id: string, patch: Partial<Note>) => void;
   onDelete: (id: string) => void;
-  /** present only for draggable margin notes (desktop) */
   onLiftPointerDown?: (e: PointerEvent, noteId: string) => void;
 }
 
@@ -46,7 +44,7 @@ export default function StickyNote({ note, snippet, onPatch, onDelete, onLiftPoi
     color: inkCss,
     fontSize: `calc(var(--note-size) * ${SIZE_FACTOR[note.font] ?? 1})`,
     rotate: `${tilt}deg`,
-    transition: "box-shadow 0.2s ease, opacity 0.25s ease, filter 0.25s ease",
+    // REMOVED: transition was causing the "not smooth" drag feeling
   };
 
   return (
@@ -109,9 +107,23 @@ export default function StickyNote({ note, snippet, onPatch, onDelete, onLiftPoi
       {onLiftPointerDown && (
         <span
           className="drag-grip"
-          data-nodrag
+          // REMOVED: data-nodrag was preventing proper drag capture
           title="Drag — drop on the margin rail to pin it there, or anywhere else to leave it free"
-          onPointerDown={(e) => onLiftPointerDown(e, note.id)}
+          onPointerDown={(e) => {
+            e.stopPropagation(); // Prevents parent handlers from interfering
+            onLiftPointerDown(e, note.id);
+          }}
+          style={{
+            cursor: "grab",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "4px 6px",
+            borderRadius: "4px",
+            background: "rgba(0,0,0,0.05)",
+            userSelect: "none",
+            touchAction: "none", // Prevents browser touch gestures from interfering
+          }}
         >
           <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true">
             <circle cx="2.5" cy="2.5" r="1.3" />
@@ -169,7 +181,7 @@ export default function StickyNote({ note, snippet, onPatch, onDelete, onLiftPoi
               className="mt-1.5 border-t border-dashed border-[rgba(60,50,10,0.3)] pt-1 text-[0.62rem] leading-snug text-[rgba(60,50,10,0.75)]"
               style={{ fontFamily: "var(--font-body)" }}
             >
-              ↳ “{snippet.slice(0, 90)}{snippet.length > 90 ? "…" : ""}”
+              ↳ "{snippet.slice(0, 90)}{snippet.length > 90 ? "…" : ""}"
             </p>
           )}
         </>

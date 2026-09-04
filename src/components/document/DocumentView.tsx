@@ -152,7 +152,6 @@ export default function DocumentView({
   const [focusMode, setFocusMode] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
-  const [hideResolved, setHideResolved] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
   const [mobileMore, setMobileMore] = useState(false);
@@ -160,6 +159,7 @@ export default function DocumentView({
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
   const [bookmarkLabel, setBookmarkLabel] = useState("");
   const [selPayload, setSelPayload] = useState<SelPayload | null>(null);
+  const [pendingSelPayload, setPendingSelPayload] = useState<SelPayload | null>(null);
   const [markMenu, setMarkMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const markMenuRef = useRef<HTMLDivElement>(null);
@@ -222,6 +222,29 @@ export default function DocumentView({
     }
   }, [zoom, doc.mode]);
 
+  /* ————— Delay selection popup until user finishes highlighting ————— */
+  useEffect(() => {
+    if (!pendingSelPayload) {
+      setSelPayload(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setSelPayload(pendingSelPayload);
+    }, 200); // Wait 200ms after the last selection update to show the popup
+    return () => clearTimeout(timer);
+  }, [pendingSelPayload]);
+
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || selection.toString().trim().length === 0) {
+        setPendingSelPayload(null);
+      }
+    };
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => document.removeEventListener("selectionchange", handleSelectionChange);
+  }, []);
+
   /* ————— Touch Selection Handler (waits for the selection to settle) ————— */
   useEffect(() => {
     const el = contentRef.current;
@@ -233,7 +256,6 @@ export default function DocumentView({
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed || selection.toString().trim().length === 0) return;
       const text = selection.toString();
-      // If the selection changed again while we were waiting, it's still being dragged — don't fire yet.
       if (text !== lastSelectionText) return;
       const anchorNode = selection.anchorNode;
       if (!anchorNode || !el.contains(anchorNode)) return;
@@ -259,14 +281,11 @@ export default function DocumentView({
       const selection = window.getSelection();
       lastSelectionText = selection ? selection.toString() : "";
       if (settleTimer) clearTimeout(settleTimer);
-      // Wait for the browser's native selection handles to finish adjusting before
-      // showing the toolbar, so it doesn't pop up mid-drag on mobile.
       settleTimer = setTimeout(fireIfStable, 260);
     };
 
     const handleSelectionChange = () => {
       if (!settleTimer) return;
-      // Selection is still moving (handle drag) — push the fire time back out.
       clearTimeout(settleTimer);
       settleTimer = setTimeout(fireIfStable, 260);
     };
@@ -343,6 +362,7 @@ export default function DocumentView({
     hist.set((a) => ({ ...a, highlights: [...a.highlights, hl] }));
     window.getSelection()?.removeAllRanges();
     setSelPayload(null);
+    setPendingSelPayload(null);
   }
 
   function eraseSelection() {
@@ -446,6 +466,7 @@ export default function DocumentView({
 
     window.getSelection()?.removeAllRanges();
     setSelPayload(null);
+    setPendingSelPayload(null);
   }
 
   function clearMarks(type: MarkType | "all") {
@@ -537,6 +558,7 @@ export default function DocumentView({
     }));
     window.getSelection()?.removeAllRanges();
     setSelPayload(null);
+    setPendingSelPayload(null);
     setMarkMenu(null);
     window.setTimeout(() => {
       const el = contentRef.current?.querySelector(`[data-note-anchor="${noteId}"] textarea`) as HTMLElement | null;
@@ -687,37 +709,41 @@ export default function DocumentView({
     setRailDrawer(false);
   }
 
-  /* ————— margin lift drag (continuous gesture) ————— */
-
-  function onLift(e: ReactPointerEvent, noteId: string) {
+     /* ————— margin lift drag (continuous gesture) ————— */
+  function onLift(e: ReactPointerEvent, noteId: string, noteEl: HTMLElement) {
     if (isMobile) return;
-    const el = contentRef.current?.querySelector(`[data-note-anchor="${noteId}"]`);
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    e.preventDefault();
+    
+    // Measure the EXACT element that was clicked. No guessing.
+    const r = noteEl.getBoundingClientRect();
+    
     setLiftBoth({
       id: noteId,
       x: e.clientX,
       y: e.clientY,
       dx: e.clientX - r.left,
       dy: e.clientY - r.top,
-      w: r.width,
-      h: r.height,
+      w: 240, // Force a readable width so it never looks squished
+      h: Math.max(120, r.height),
     });
   }
 
-  useEffect(() => {
+   useEffect(() => {
     if (!lift) return;
+
     const move = (e: PointerEvent) => {
+      e.preventDefault();
       setLiftBoth({ ...(liftRef.current as LiftState), x: e.clientX, y: e.clientY });
       setDragOverRail(railZoneActive(e.clientX));
     };
+
     const up = (e: PointerEvent) => {
       const l = liftRef.current;
       setDragOverRail(false);
       setLiftBoth(null);
       if (!l) return;
+
       const overRail = railZoneActive(e.clientX);
+
       if (overRail) {
         const note = notes.find((n) => n.id === l.id);
         if (note && note.placement !== "margin") {
@@ -726,19 +752,23 @@ export default function DocumentView({
         }
       } else if (contentRef.current) {
         const cr = contentRef.current.getBoundingClientRect();
+
         patchNote(l.id, {
           placement: "freeform",
           position: {
-            x: Math.max(4, e.clientX - cr.left - l.dx),
-            y: Math.max(4, e.clientY - cr.top - l.dy),
-            w: l.w,
-            h: l.h,
+            x: Math.max(8, e.clientX - cr.left - l.dx),
+            y: Math.max(8, e.clientY - cr.top - l.dy),
+            w: 240,
+            h: 180,
           },
         });
+        onToast("Note placed on page.");
       }
     };
-    window.addEventListener("pointermove", move);
+
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
+
     return () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -778,6 +808,7 @@ export default function DocumentView({
           return;
         }
         setSelPayload(null);
+        setPendingSelPayload(null);
         setMarkMenu(null);
         setSearchOpen(false);
         setMobileMore(false);
@@ -808,6 +839,7 @@ export default function DocumentView({
   const scrollRaf = useRef(0);
   function onScroll() {
     setSelPayload(null);
+    setPendingSelPayload(null);
     setMarkMenu(null);
     cancelAnimationFrame(scrollRaf.current);
     scrollRaf.current = requestAnimationFrame(() => {
@@ -854,6 +886,7 @@ export default function DocumentView({
       if (markMenuRef.current?.contains(t)) return;
       if ((t as HTMLElement).closest?.('.pa-mark, [data-note-anchor]')) return;
       setSelPayload(null);
+      setPendingSelPayload(null);
       setMarkMenu(null);
       window.getSelection()?.removeAllRanges();
     }
@@ -869,10 +902,9 @@ export default function DocumentView({
 
   const visibleNotes = useMemo(() => {
     let list = notes;
-    if (hideResolved) list = list.filter((n) => !n.resolved);
     if (tagFilter.length) list = list.filter((n) => n.tags.some((t) => tagFilter.includes(t)));
     return list;
-  }, [notes, tagFilter, hideResolved]);
+  }, [notes, tagFilter]);
 
   function orderKey(n: Note): number {
     if (typeof n.order === "number") return n.order;
@@ -898,8 +930,6 @@ export default function DocumentView({
     for (const n of notes) for (const t of n.tags) m.set(t, (m.get(t) ?? 0) + 1);
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [notes]);
-
-  const hasResolved = useMemo(() => notes.some((n) => n.resolved), [notes]);
 
   function snippetFor(noteId: string): string | undefined {
     const n = notes.find((x) => x.id === noteId);
@@ -1027,6 +1057,7 @@ export default function DocumentView({
     const clientX = (ev as any).clientX;
     const clientY = (ev as any).clientY;
     setSelPayload(null);
+    setPendingSelPayload(null);
     setMarkMenu({ id, x: clientX, y: clientY });
   }
 
@@ -1089,9 +1120,9 @@ export default function DocumentView({
       style={{ "--note-size": `${settings.noteFontSize}px` } as CSSProperties}
     >
       {!focusMode && (
-        <header className="no-print relative z-40 border-b border-[rgba(var(--shadow-ink),0.16)] bg-[var(--paper)]/95 px-2 py-1.5 backdrop-blur-sm sm:px-5 sm:py-2">
+        <header className="no-print relative z-40 border-b border-[rgba(var(--shadow-ink),0.16)] bg-[var(--paper)]/95 px-2 py-1 backdrop-blur-sm sm:px-4 sm:py-1.5">
           <div className="mx-auto flex max-w-[110rem] items-center gap-0.5 sm:gap-1.5">
-            <button className="icon-btn !h-9 !w-9 sm:!h-11 sm:!w-11 shrink-0" onClick={onBack} title="Back to the library" aria-label="Back to library">
+            <button className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9 shrink-0" onClick={onBack} title="Back to the library" aria-label="Back to library">
               <IconArrowLeft size={18} />
             </button>
             <div className="min-w-0 flex-1 overflow-hidden">
@@ -1136,91 +1167,91 @@ export default function DocumentView({
 
               <div className="flex items-center gap-0.5 rounded-lg border border-line p-0.5" role="group" aria-label="Page zoom">
                 <button
-                  className="icon-btn !h-11 !w-11"
+                  className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9"
                   onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.15) * 100) / 100))}
                   disabled={zoom <= 0.5}
                   title="Zoom out"
                   aria-label="Zoom out"
                 >
-                  <IconZoomOut size={18} />
+                  <IconZoomOut size={16} />
                 </button>
-                <span className="w-11 text-center font-display text-xs font-bold text-ink-soft">{Math.round(zoom * 100)}%</span>
+                <span className="w-9 text-center font-display text-xs font-bold text-ink-soft">{Math.round(zoom * 100)}%</span>
                 <button
-                  className="icon-btn !h-11 !w-11"
+                  className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9"
                   onClick={() => setZoom((z) => Math.min(2.5, Math.round((z + 0.15) * 100) / 100))}
                   disabled={zoom >= 2.5}
                   title="Zoom in"
                   aria-label="Zoom in"
                 >
-                  <IconZoomIn size={18} />
+                  <IconZoomIn size={16} />
                 </button>
               </div>
 
               <button
-                className={`icon-btn !h-11 !w-11 ${!isMobile && docPlacement === "freeform" ? "on" : ""}`}
+                className={`icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9 ${!isMobile && docPlacement === "freeform" ? "on" : ""}`}
                 title={`New notes default to ${docPlacement} — click to switch`}
                 aria-label="Toggle default note placement"
                 onClick={() =>
                   onDocChange({ ...doc, notePlacement: docPlacement === "margin" ? "freeform" : "margin" })
                 }
               >
-                {docPlacement === "margin" ? <IconRows size={18} /> : <IconMove size={18} />}
+                {docPlacement === "margin" ? <IconRows size={16} /> : <IconMove size={16} />}
               </button>
 
               <div className="relative">
                 <button
-                  className={`icon-btn !h-11 !w-11 ${bookmarkOpen ? "on" : ""}`}
+                  className={`icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9 ${bookmarkOpen ? "on" : ""}`}
                   onClick={() => setBookmarkOpen((v) => !v)}
                   title="Bookmark the current spot"
                   aria-label="Bookmark current position"
                   aria-expanded={bookmarkOpen}
                 >
-                  <IconBookmark size={20} />
+                  <IconBookmark size={18} />
                 </button>
               </div>
 
               <button
-                className={`icon-btn !h-11 !w-11 ${focusMode ? "on" : ""}`}
+                className={`icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9 ${focusMode ? "on" : ""}`}
                 onClick={() => setFocusMode((v) => !v)}
                 title="Focus mode — dim everything not in view (Press Esc to exit)"
                 aria-pressed={focusMode}
                 aria-label="Toggle focus mode"
               >
-                <IconFocus size={20} />
+                <IconFocus size={18} />
               </button>
 
               <button
-                className={`icon-btn !h-11 !w-11 ${quickOpen ? "on" : ""}`}
+                className={`icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9 ${quickOpen ? "on" : ""}`}
                 onClick={() => setQuickOpen((v) => !v)}
                 title="Quick style — paper, hand, sizes"
                 aria-label="Open quick style panel"
               >
-                <IconPen size={20} />
+                <IconPen size={18} />
               </button>
             </div>
 
             {/* Mobile: search + clean-view only in the bar; everything else lives in the "more" sheet */}
             <div className="relative shrink-0 md:hidden">
               <button
-                className={`icon-btn !h-9 !w-9 ${searchOpen ? "on" : ""}`}
+                className={`icon-btn !h-8 !w-8 ${searchOpen ? "on" : ""}`}
+                onClick={() => setSearchOpen((v) => !v)}
+                title="Search the document"
+                aria-label="Search within document"
+                aria-expanded={searchOpen}
+              >
+                <IconSearch size={16} />
+              </button>
+            </div>
+
+            <div className="relative hidden shrink-0 md:block">
+              <button
+                className={`icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9 ${searchOpen ? "on" : ""}`}
                 onClick={() => setSearchOpen((v) => !v)}
                 title="Search the document"
                 aria-label="Search within document"
                 aria-expanded={searchOpen}
               >
                 <IconSearch size={18} />
-              </button>
-            </div>
-
-            <div className="relative hidden shrink-0 md:block">
-              <button
-                className={`icon-btn !h-11 !w-11 ${searchOpen ? "on" : ""}`}
-                onClick={() => setSearchOpen((v) => !v)}
-                title="Search the document"
-                aria-label="Search within document"
-                aria-expanded={searchOpen}
-              >
-                <IconSearch size={20} />
               </button>
               {searchOpen && (
                 <div className="absolute right-0 top-10 z-50">
@@ -1237,24 +1268,24 @@ export default function DocumentView({
             </div>
 
             <button
-              className={`icon-btn !h-9 !w-9 sm:!h-11 sm:!w-11 shrink-0 ${clean ? "on" : ""}`}
+              className={`icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9 shrink-0 ${clean ? "on" : ""}`}
               onClick={() => setClean((v) => !v)}
               title={clean ? "Bring the annotations back" : "Clean reading view — hide marks & notes"}
               aria-pressed={clean}
               aria-label="Toggle clean reading view"
             >
-              {clean ? <IconEyeOff size={18} /> : <IconEye size={18} />}
+              {clean ? <IconEyeOff size={16} /> : <IconEye size={16} />}
             </button>
 
             <div className="relative hidden shrink-0 md:block">
               <button
-                className={`icon-btn !h-11 !w-11 ${eraserOpen ? "on" : ""}`}
+                className={`icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9 ${eraserOpen ? "on" : ""}`}
                 onClick={() => setEraserOpen((v) => !v)}
                 title="Erase marks by type"
                 aria-label="Erase marks"
                 aria-expanded={eraserOpen}
               >
-                <IconTrash size={20} />
+                <IconTrash size={18} />
               </button>
               {eraserOpen && (
                 <>
@@ -1311,19 +1342,19 @@ export default function DocumentView({
             <span className="mx-0.5 hidden h-5 w-px bg-line md:block" aria-hidden="true" />
 
             <div className="hidden items-center gap-1 sm:gap-1.5 md:flex">
-              <button className="icon-btn !h-11 !w-11" onClick={hist.undo} disabled={!hist.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
-                <IconUndo size={20} />
+              <button className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9" onClick={hist.undo} disabled={!hist.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
+                <IconUndo size={18} />
               </button>
-              <button className="icon-btn !h-11 !w-11" onClick={hist.redo} disabled={!hist.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
-                <IconRedo size={20} />
+              <button className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9" onClick={hist.redo} disabled={!hist.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+                <IconRedo size={18} />
               </button>
               <span className="mx-0.5 h-5 w-px bg-line" aria-hidden="true" />
               <ExportMenu doc={doc} annotations={hist.present} preferred={settings.defaultExportFormat} onToast={onToast} />
-              <button className="icon-btn !h-11 !w-11" onClick={onOpenSettings} title="Desk settings" aria-label="Open settings">
-                <IconGear size={20} />
+              <button className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9" onClick={onOpenSettings} title="Desk settings" aria-label="Open settings">
+                <IconGear size={18} />
               </button>
-              <button className="icon-btn !h-11 !w-11" onClick={onToggleTheme} title="Quick paper-tone switch" aria-label="Toggle dark mode">
-                {resolvedTheme === "light" ? <IconMoon size={20} /> : <IconSun size={20} />}
+              <button className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9" onClick={onToggleTheme} title="Quick paper-tone switch" aria-label="Toggle dark mode">
+                {resolvedTheme === "light" ? <IconMoon size={18} /> : <IconSun size={18} />}
               </button>
             </div>
 
@@ -1331,12 +1362,12 @@ export default function DocumentView({
               <ExportMenu doc={doc} annotations={hist.present} preferred={settings.defaultExportFormat} onToast={onToast} />
             </div>
             <button
-              className={`icon-btn !h-9 !w-9 shrink-0 md:hidden ${mobileMore ? "on" : ""}`}
+              className={`icon-btn !h-8 !w-8 shrink-0 md:hidden ${mobileMore ? "on" : ""}`}
               onClick={() => setMobileMore((v) => !v)}
               aria-label="More actions"
               aria-expanded={mobileMore}
             >
-              <IconDots size={18} />
+              <IconDots size={16} />
             </button>
           </div>
 
@@ -1353,11 +1384,9 @@ export default function DocumentView({
             </div>
           )}
 
-          {(allTags.length > 0 || hasResolved) && (
+          {allTags.length > 0 && (
             <div className="mx-auto mt-1.5 flex max-w-[110rem] flex-wrap items-center gap-1.5">
-              {allTags.length > 0 && (
-                <span className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-ink-faint">Tags</span>
-              )}
+              <span className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-ink-faint">Tags</span>
               {allTags.map(([t, count]) => {
                 const on = tagFilter.includes(t);
                 return (
@@ -1375,31 +1404,6 @@ export default function DocumentView({
                   </button>
                 );
               })}
-              {hasResolved && (
-                <button
-                  onClick={() => setHideResolved((v) => !v)}
-                  className={`min-h-[36px] rounded-full border px-3 py-1 text-xs sm:min-h-[44px] sm:text-sm font-semibold transition-all flex items-center ${
-                    hideResolved
-                      ? "border-accent bg-accent text-[var(--paper)]"
-                      : "border-line text-ink-soft hover:border-ink-faint hover:text-ink"
-                  }`}
-                  aria-pressed={hideResolved}
-                  title="Resolved notes stay visible unless hidden here"
-                >
-                  hide resolved
-                </button>
-              )}
-              {(tagFilter.length > 0 || hideResolved) && (
-                <button
-                  className="min-h-[36px] text-xs sm:min-h-[44px] sm:text-sm font-semibold text-accent-deep underline-offset-2 hover:underline flex items-center px-2"
-                  onClick={() => {
-                    setTagFilter([]);
-                    setHideResolved(false);
-                  }}
-                >
-                  clear
-                </button>
-              )}
             </div>
           )}
         </header>
@@ -1428,23 +1432,23 @@ export default function DocumentView({
               </div>
             )}
             <div className="mb-1.5 flex items-center justify-between rounded-md border border-line px-2 py-1">
-              <button className="icon-btn !h-11 !w-11" onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.15) * 100) / 100))} aria-label="Zoom out">
-                <IconZoomOut size={18} />
+              <button className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9" onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.15) * 100) / 100))} aria-label="Zoom out">
+                <IconZoomOut size={16} />
               </button>
               <span className="font-display text-sm font-bold text-ink">{Math.round(zoom * 100)}%</span>
-              <button className="icon-btn !h-11 !w-11" onClick={() => setZoom((z) => Math.min(2.5, Math.round((z + 0.15) * 100) / 100))} aria-label="Zoom in">
-                <IconZoomIn size={18} />
+              <button className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9" onClick={() => setZoom((z) => Math.min(2.5, Math.round((z + 0.15) * 100) / 100))} aria-label="Zoom in">
+                <IconZoomIn size={16} />
               </button>
             </div>
             {[
               {
                 label: docPlacement === "margin" ? "Notes → freeform" : "Notes → margin rail",
-                icon: docPlacement === "margin" ? <IconMove size={18} /> : <IconRows size={18} />,
+                icon: docPlacement === "margin" ? <IconMove size={16} /> : <IconRows size={16} />,
                 act: () => onDocChange({ ...doc, notePlacement: docPlacement === "margin" ? "freeform" : "margin" }),
               },
               {
                 label: selectMode ? "Exit select mode" : "Multi-select marks",
-                icon: selectMode ? <IconX size={18} /> : <IconBox size={18} />,
+                icon: selectMode ? <IconX size={16} /> : <IconBox size={16} />,
                 act: () => {
                   setSelectMode(v => {
                     const next = !v;
@@ -1455,26 +1459,26 @@ export default function DocumentView({
               },
               {
                 label: focusMode ? "Focus mode off" : "Focus mode",
-                icon: <IconFocus size={18} />,
+                icon: <IconFocus size={16} />,
                 act: () => setFocusMode((v) => !v),
               },
               {
                 label: "Bookmark this spot",
-                icon: <IconBookmark size={18} />,
+                icon: <IconBookmark size={16} />,
                 act: () => setBookmarkOpen(true),
               },
               {
                 label: eraserOpen ? "Hide erase menu" : "Erase marks…",
-                icon: <IconEraser size={18} />,
+                icon: <IconEraser size={16} />,
                 act: () => setEraserOpen((v) => !v),
                 disabled: highlights.length === 0,
               },
-              { label: "Undo", icon: <IconUndo size={18} />, act: hist.undo, disabled: !hist.canUndo },
-              { label: "Redo", icon: <IconRedo size={18} />, act: hist.redo, disabled: !hist.canRedo },
-              { label: "Desk settings", icon: <IconGear size={18} />, act: onOpenSettings },
+              { label: "Undo", icon: <IconUndo size={16} />, act: hist.undo, disabled: !hist.canUndo },
+              { label: "Redo", icon: <IconRedo size={16} />, act: hist.redo, disabled: !hist.canRedo },
+              { label: "Desk settings", icon: <IconGear size={16} />, act: onOpenSettings },
               {
                 label: resolvedTheme === "light" ? "Lamplight paper" : "Daylight paper",
-                icon: resolvedTheme === "light" ? <IconMoon size={18} /> : <IconSun size={18} />,
+                icon: resolvedTheme === "light" ? <IconMoon size={16} /> : <IconSun size={16} />,
                 act: onToggleTheme,
               },
             ].map((it) => (
@@ -1646,7 +1650,7 @@ export default function DocumentView({
                       sheetClass={sheetClass}
                       styleVars={readingStyle}
                       onMarkClick={handleMarkClick}
-                      onSelect={(s) => setSelPayload({ ...s, kind: "text" })}
+                      onSelect={(s) => setPendingSelPayload({ ...s, kind: "text" })}
                       articleRef={articleRef}
                     />
                   </div>
@@ -1661,7 +1665,7 @@ export default function DocumentView({
                       sheetClass={sheetClass}
                       zoom={zoom}
                       onMarkClick={handleMarkClick}
-                      onSelect={(s) => setSelPayload({ ...s, kind: "page" })}
+                      onSelect={(s) => setPendingSelPayload({ ...s, kind: "page" })}
                       onPageSeen={setActivePage}
                       pageNotes={(pageNum) => {
                         if (clean) return null;
@@ -1705,14 +1709,14 @@ export default function DocumentView({
                 </section>
               </div>
 
-              {!focusMode && (
+               {!focusMode && (
                 <div className="hidden md:block">
                   <MarginRail
                     notes={marginNotes}
                     snippetFor={snippetFor}
                     onPatch={patchNote}
                     onDelete={deleteNote}
-                    onLift={isMobile ? undefined : onLift}
+                    onLift={isMobile ? undefined : onLift} // <--- TRIGGERS THE DRAG
                     hideId={lift?.id}
                   />
                 </div>
@@ -1730,6 +1734,7 @@ export default function DocumentView({
                       size={{ width: pos.w ?? 236, height: pos.h ?? 176 }}
                       position={{ x: pos.x, y: pos.y }}
                       bounds="parent"
+                      cancel="textarea, input, button, [contenteditable]"
                       onDrag={(e) => setDragOverRail(railZoneActive(e.clientX))}
                       onDragStop={(e, d) => {
                         if (railZoneActive(e.clientX)) {
@@ -1812,14 +1817,24 @@ export default function DocumentView({
         </div>
       )}
 
-      {lift && liftedNote && (
+       {lift && liftedNote && (
         <div
-          className="pa-note pa-ghost"
+          className="pa-ghost"
           style={{
+            position: "fixed",
             left: lift.x - lift.dx,
             top: lift.y - lift.dy,
-            width: lift.w,
+            width: 240,
+            zIndex: 99999,
+            pointerEvents: "none",
+            opacity: 0.92,
+            borderRadius: 8,
+            padding: 12,
+            background: "var(--sheet)",
+            border: "1px solid var(--line, rgba(128,128,128,0.25))",
+            boxShadow: "0 12px 32px -8px rgba(0,0,0,0.25)",
             color: `var(--ink-${liftedNote.ink})`,
+            willChange: "left, top",
           }}
           aria-hidden="true"
         >
@@ -1832,7 +1847,7 @@ export default function DocumentView({
       {selPayload && !clean && (
         <div
           ref={toolbarRef}
-          className="pop no-print fixed z-[70] flex flex-wrap items-center justify-center gap-0.5 sm:gap-1 rounded-lg border border-line bg-sheet p-1 shadow-[0_14px_34px_-12px_rgba(var(--shadow-ink),0.55)]"
+          className="pop no-print fixed z-[70] flex flex-wrap items-center justify-center gap-0.5 sm:gap-1 rounded-lg border border-line bg-sheet p-0.5 sm:p-1 shadow-[0_14px_34px_-12px_rgba(var(--shadow-ink),0.55)]"
           style={{
             left: tbLeft,
             top: tbTop,
@@ -1845,7 +1860,7 @@ export default function DocumentView({
           {MARK_TYPES.map((t) => (
             <button
               key={t.key}
-              className={`icon-btn !h-8 !w-8 sm:!h-10 sm:!w-10 ${tool === t.key ? "on" : ""}`}
+              className={`icon-btn !h-7 !w-7 sm:!h-8 sm:!w-8 ${tool === t.key ? "on" : ""}`}
               title={`${t.label} — press “${t.key[0].toUpperCase()}” after selecting`}
               aria-pressed={tool === t.key}
               aria-label={t.label}
@@ -1854,7 +1869,7 @@ export default function DocumentView({
                 if (t.key !== "highlight") applyMark(t.key, lastColor.current);
               }}
             >
-              {MARK_ICON[t.key]({ size: isMobile ? 14 : 17 })}
+              {MARK_ICON[t.key]({ size: isMobile ? 13 : 15 })}
             </button>
           ))}
           <span className="mx-0.5 h-5 sm:h-6 w-px bg-line" aria-hidden="true" />
@@ -1864,7 +1879,7 @@ export default function DocumentView({
             return (
               <button
                 key={c.key}
-                className="h-8 w-8 sm:h-10 sm:w-10 shrink-0 rounded-full border border-[rgba(var(--shadow-ink),0.35)] transition-transform hover:scale-110 active:scale-95"
+                className="h-7 w-7 sm:h-8 sm:w-8 shrink-0 rounded-full border border-[rgba(var(--shadow-ink),0.35)] transition-transform hover:scale-110 active:scale-95"
                 style={{ background: `var(--hl-${c.key})` }}
                 title={`${tip} — apply ${tool}`}
                 aria-label={`Apply ${tip} ${tool}`}
@@ -1875,19 +1890,19 @@ export default function DocumentView({
           <span className="mx-0.5 h-5 sm:h-6 w-px bg-line" aria-hidden="true" />
 
           <button
-            className="flex min-h-[32px] sm:min-h-[40px] items-center gap-1 sm:gap-1.5 rounded-md border border-line px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-[0.68rem] sm:text-xs font-semibold text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
+            className="flex min-h-[28px] sm:min-h-[32px] items-center gap-1 sm:gap-1.5 rounded-md border border-line px-1.5 sm:px-2 py-0.5 sm:py-1 text-[0.65rem] sm:text-[0.7rem] font-semibold text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
             onClick={eraseSelection}
             title="Erase marks in selection — press “E”"
           >
-            <IconEraser size={14} className="text-[var(--ink-red-ui, #d33)]" /> Erase
+            <IconEraser size={13} className="text-[var(--ink-red-ui, #d33)]" /> Erase
           </button>
 
           <button
-            className="flex min-h-[32px] sm:min-h-[40px] items-center gap-1 sm:gap-1.5 rounded-md border border-line px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-[0.68rem] sm:text-xs font-semibold text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
+            className="flex min-h-[28px] sm:min-h-[32px] items-center gap-1 sm:gap-1.5 rounded-md border border-line px-1.5 sm:px-2 py-0.5 sm:py-1 text-[0.65rem] sm:text-[0.7rem] font-semibold text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
             onClick={() => attachNote()}
             title="Attach a sticky note — press “N”"
           >
-            <IconNote size={14} className="text-[var(--ink-blue-ui)]" /> Note
+            <IconNote size={13} className="text-[var(--ink-blue-ui)]" /> Note
           </button>
         </div>
       )}
@@ -1916,7 +1931,7 @@ export default function DocumentView({
           >
             <IconTrash size={15} /> Tear up
           </button>
-          <button className="icon-btn !h-9 !w-9 sm:!h-11 sm:!w-11" onClick={() => { setSelectedIds(new Set()); setSelectMode(false); }} aria-label="Clear selection" title="Clear selection (Esc)">
+          <button className="icon-btn !h-8 !w-8 sm:!h-9 sm:!w-9" onClick={() => { setSelectedIds(new Set()); setSelectMode(false); }} aria-label="Clear selection" title="Clear selection (Esc)">
             <IconX size={16} />
           </button>
         </div>
@@ -1942,11 +1957,11 @@ export default function DocumentView({
             {MARK_TYPES.map((t) => (
               <button
                 key={t.key}
-                className={`icon-btn !h-8 !w-8 sm:!h-10 sm:!w-10 ${markMenuHl.type === t.key ? "on" : ""}`}
+                className={`icon-btn !h-7 !w-7 sm:!h-8 sm:!w-8 ${markMenuHl.type === t.key ? "on" : ""}`}
                 title={`Change to ${t.label.toLowerCase()}`}
                 onClick={() => patchMark(markMenuHl.id, { type: t.key })}
               >
-                {MARK_ICON[t.key]({ size: isMobile ? 14 : 17 })}
+                {MARK_ICON[t.key]({ size: isMobile ? 13 : 15 })}
               </button>
             ))}
             <span className="mx-0.5 h-5 w-px bg-line" aria-hidden="true" />
@@ -1955,7 +1970,7 @@ export default function DocumentView({
               return (
                 <button
                   key={c.key}
-                  className={`h-8 w-8 sm:h-10 sm:w-10 rounded-full border transition-transform hover:scale-110 active:scale-95 ${
+                  className={`h-7 w-7 sm:h-8 sm:w-8 rounded-full border transition-transform hover:scale-110 active:scale-95 ${
                     markMenuHl.color === c.key ? "border-ink" : "border-[rgba(var(--shadow-ink),0.35)]"
                   }`}
                   style={{ background: `var(--hl-${c.key})` }}
@@ -1982,6 +1997,7 @@ export default function DocumentView({
                 } else {
                   const keep = markMenu.id;
                   setSelPayload(null);
+                  setPendingSelPayload(null);
                   attachNote(keep);
                 }
               }}
@@ -2050,6 +2066,7 @@ function PageNoteHost({
               }}
               position={{ x: pos.x * size.w, y: pos.y * size.h }}
               bounds="parent"
+              cancel="textarea, input, button, [contenteditable]"
               onDragStop={(_, d) =>
                 onPatch(n.id, {
                   position: {
