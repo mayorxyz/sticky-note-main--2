@@ -6,7 +6,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import type { Highlight, MarkColor, MarkType, PageData, RectF } from "../data/types";
+import type { Highlight, MarkColor, MarkType, PageData, RectF } from "../../domain/types";
 
 export interface LayoutSelection {
   page: number;
@@ -234,6 +234,22 @@ function PageBlock({
       });
     });
   }
+
+  /* Touch selection: mobile browsers don't fire mouseup reliably after a
+     long-press text selection, so watch the document selection itself and
+     rerun the same rect computation when it changes anywhere on the page. */
+  useEffect(() => {
+    const check = () => checkSelection();
+    document.addEventListener("selectionchange", check);
+    document.addEventListener("touchend", check);
+    window.addEventListener("pointerup", check);
+    return () => {
+      document.removeEventListener("selectionchange", check);
+      document.removeEventListener("touchend", check);
+      window.removeEventListener("pointerup", check);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function clickThroughMark(e: ReactMouseEvent) {
     const cont = ref.current;

@@ -1,7 +1,7 @@
 import { useMemo, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import type { Note, NoteFont, NoteInk } from "../data/types";
-import { NOTE_FONTS, NOTE_INKS } from "../data/types";
-import { IconCheck, IconMaximize, IconMinimize, IconPen, IconTrash } from "./icons";
+import type { Note, NoteFont, NoteInk } from "../../domain/types";
+import { NOTE_FONTS, NOTE_INKS } from "../../domain/types";
+import { IconCheck, IconMaximize, IconMinimize, IconPen, IconTrash } from "../ui/icons";
 
 const FONT_CYCLE: NoteFont[] = ["caveat", "kalam", "patrick-hand", "shadows", "indie", "architects"];
 const INK_CYCLE: NoteInk[] = ["blue", "red", "pencil"];

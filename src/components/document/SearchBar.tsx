@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PageData, RectF } from "../data/types";
-import { IconSearch, IconX } from "./icons";
+import type { PageData, RectF } from "../../domain/types";
+import { IconSearch, IconX } from "../ui/icons";
 
 export type SearchSource =
   | { kind: "text"; text: string }

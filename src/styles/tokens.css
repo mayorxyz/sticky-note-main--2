@@ -1,0 +1,167 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-deep: var(--paper-deep);
+  --color-sheet: var(--sheet);
+  --color-sheet-deep: var(--sheet-deep);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-deep: var(--accent-deep);
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-body: "Inter", "Helvetica Neue", Arial, sans-serif;
+}
+
+/* ————————————————————————————————————————————————
+   Paper tokens. Highlight + ink colors are DERIVED per theme from one base
+   hue each: fills keep text-on-fill readable, solids target ~4.5:1 against
+   the theme's sheet. Same hue everywhere; only lightness/chroma shifts.
+   Hues: sun 46 · rose 340 · moss 145 · sky 210 · amber 30 · violet 265 ·
+         teal 174 · graphite 250 (low-sat) · coral 12
+   ———————————————————————————————————————————————— */
+:root {
+  --paper: #f4ecd8;
+  --paper-deep: #e9dec2;
+  --sheet: #faf4e3;
+  --sheet-deep: #f0e7cd;
+  --ink: #2b2620;
+  --ink-soft: #5d5344;
+  --ink-faint: #8d8069;
+  --line: #d9cba6;
+  --accent: #a33d2a;
+  --accent-deep: #7c2d1f;
+  --shadow-ink: 43, 38, 32;
+  --grain-opacity: 0.055;
+  --crease-opacity: 0.11;
+  --note-paper: #fdf6a9;
+  --note-paper-deep: #efe37e;
+  /* note inks: text on the (always bright) note paper — deep + vivid */
+  --ink-blue: hsl(222 80% 38%);
+  --ink-red: hsl(4 74% 40%);
+  --ink-pencil: hsl(45 10% 36%);
+  /* desk-surface UI variants of the same inks */
+  --ink-blue-ui: hsl(222 70% 42%);
+  --ink-red-ui: hsl(4 68% 42%);
+  --ink-pencil-ui: hsl(45 9% 42%);
+  /* highlight fills — alpha over sheet keeps ink readable on top */
+  --hl-sun: hsl(46 84% 62% / 0.52);
+  --hl-rose: hsl(340 78% 70% / 0.5);
+  --hl-moss: hsl(145 62% 62% / 0.5);
+  --hl-sky: hsl(210 78% 68% / 0.5);
+  --hl-amber: hsl(30 88% 62% / 0.52);
+  --hl-violet: hsl(265 62% 72% / 0.5);
+  --hl-teal: hsl(174 62% 58% / 0.5);
+  --hl-graphite: hsl(250 14% 62% / 0.5);
+  --hl-coral: hsl(12 84% 68% / 0.52);
+  /* solid bars/strokes — ~4.5:1 vs sheet */
+  --hl-sun-solid: hsl(43 88% 34%);
+  --hl-rose-solid: hsl(340 70% 40%);
+  --hl-moss-solid: hsl(145 62% 30%);
+  --hl-sky-solid: hsl(210 74% 38%);
+  --hl-amber-solid: hsl(28 90% 36%);
+  --hl-violet-solid: hsl(265 56% 44%);
+  --hl-teal-solid: hsl(174 70% 27%);
+  --hl-graphite-solid: hsl(250 12% 40%);
+  --hl-coral-solid: hsl(12 78% 40%);
+  --font-note-caveat: "Caveat", "Segoe Script", cursive;
+  --font-note-kalam: "Kalam", "Comic Sans MS", cursive;
+  --font-note-patrick: "Patrick Hand", "Comic Sans MS", cursive;
+  --font-note-shadows: "Shadows Into Light", "Segoe Script", cursive;
+  --font-note-indie: "Indie Flower", "Segoe Script", cursive;
+  --font-note-architects: "Architects Daughter", "Comic Sans MS", cursive;
+  --note-size: 19px;
+}
+
+.dark {
+  --paper: #3a3226;
+  --paper-deep: #322b20;
+  --sheet: #453b2b;
+  --sheet-deep: #3b3223;
+  --ink: #e8dfc8;
+  --ink-soft: #b7ab8e;
+  --ink-faint: #8b8066;
+  --line: #5c4f36;
+  --accent: #d97b52;
+  --accent-deep: #e09a72;
+  --shadow-ink: 10, 8, 5;
+  --grain-opacity: 0.1;
+  --crease-opacity: 0.17;
+  --note-paper: #f5ec9f;
+  --note-paper-deep: #e2d57c;
+  --ink-blue: hsl(222 82% 36%);
+  --ink-red: hsl(4 76% 38%);
+  --ink-pencil: hsl(45 12% 34%);
+  --ink-blue-ui: hsl(218 75% 70%);
+  --ink-red-ui: hsl(6 72% 68%);
+  --ink-pencil-ui: hsl(46 22% 66%);
+  --hl-sun: hsl(46 60% 52% / 0.34);
+  --hl-rose: hsl(340 55% 58% / 0.34);
+  --hl-moss: hsl(145 45% 52% / 0.34);
+  --hl-sky: hsl(210 58% 58% / 0.34);
+  --hl-amber: hsl(30 62% 54% / 0.34);
+  --hl-violet: hsl(265 48% 62% / 0.34);
+  --hl-teal: hsl(174 48% 50% / 0.34);
+  --hl-graphite: hsl(250 12% 60% / 0.3);
+  --hl-coral: hsl(12 60% 58% / 0.34);
+  --hl-sun-solid: hsl(46 74% 62%);
+  --hl-rose-solid: hsl(340 68% 68%);
+  --hl-moss-solid: hsl(145 46% 60%);
+  --hl-sky-solid: hsl(210 66% 66%);
+  --hl-amber-solid: hsl(30 76% 60%);
+  --hl-violet-solid: hsl(265 60% 72%);
+  --hl-teal-solid: hsl(174 52% 56%);
+  --hl-graphite-solid: hsl(250 12% 66%);
+  --hl-coral-solid: hsl(12 72% 64%);
+}
+
+.black {
+  --paper: #000000;
+  --paper-deep: #000000;
+  --sheet: #000000;
+  --sheet-deep: #000000;
+  --ink: #ffffff;
+  --ink-soft: #c9c9c9;
+  --ink-faint: #8f8f8f;
+  --line: #3d3d3d;
+  --accent: #ffffff;
+  --accent-deep: #d6d6d6;
+  /* Existing controls use this channel for their borders.  White makes the
+     low-opacity outlines visible against the otherwise pure-black desk. */
+  --shadow-ink: 255, 255, 255;
+  --grain-opacity: 0;
+  --crease-opacity: 0;
+}
+
+/* Black means black: no paper texture, shine, vignette, or tinted surface. */
+.black .grain-layer,
+.black .crease-layer,
+.black .vignette-layer { display: none; }
+
+.black .paper-sheet {
+  background-color: #000000;
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.slideover .paper-crumpled::after,
+.slideover .paper-aged,
+.slideover .paper-blueprint {
+  opacity: 1 !important;
+  background-image: none !important;
+}
+
+/* Keep plain Black truly black, but do not overwrite the background image of
+   a selected paper style (grid, dot, blueprint, etc.). */
+.black .paper-sheet:not(.paper-lined):not(.paper-grid):not(.paper-dot):not(.paper-crumpled):not(.paper-aged):not(.paper-blueprint) {
+  background: #000000;
+}
+
+.black .desk-card,
+.black .slideover {
+  background: #000000;
+  border-color: var(--line);
+  box-shadow: none;
+}

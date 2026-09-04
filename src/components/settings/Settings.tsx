@@ -8,9 +8,9 @@ import type {
   PaperStyle,
   Settings,
   ThemeChoice,
-} from "../data/types";
-import { MARK_COLORS, NOTE_FONTS, NOTE_INKS, PAPER_STYLES, READING_FONTS } from "../data/types";
-import { formatBytes, STORAGE_QUOTA } from "../lib/store";
+} from "../../domain/types";
+import { MARK_COLORS, NOTE_FONTS, NOTE_INKS, PAPER_STYLES, READING_FONTS } from "../../domain/types";
+import { formatBytes, STORAGE_QUOTA } from "../../lib/store";
 import {
   IconArrowDown,
   IconArrowLeft,
@@ -18,7 +18,7 @@ import {
   IconCheck,
   IconDownload,
   IconTrash,
-} from "./icons";
+} from "../ui/icons";
 
 interface Props {
   settings: Settings;

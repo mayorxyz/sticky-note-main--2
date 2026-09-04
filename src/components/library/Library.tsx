@@ -1,8 +1,8 @@
 import { useRef, useState, type CSSProperties } from "react";
-import type { AnnotationsState, Bookmark, DocumentRecord } from "../data/types";
-import { formatDate } from "../lib/store";
+import type { AnnotationsState, Bookmark, DocumentRecord } from "../../domain/types";
+import { formatDate } from "../../lib/store";
 import Uploader from "./Uploader";
-import { EditableTitle } from "./EditableTitle"; // <-- Added import
+import { EditableTitle } from "../ui/EditableTitle";
 import {
   IconBook,
   IconDownload,
@@ -15,7 +15,7 @@ import {
   IconSpark,
   IconSun,
   IconTrash,
-} from "./icons";
+} from "../ui/icons";
 
 export interface BackupPayload {
   docs: DocumentRecord[];
@@ -125,7 +125,7 @@ export default function Library({
               e.target.value = "";
             }}
           />
-          <button className="btn-ghost" onClick={() => importRef.current?.click()} title="Restore a .json backup">
+          <button className="btn-ghost" onClick={() => importRef.current?.click()} title="Restore a .json backup" aria-label="Restore a .json backup">
             <IconDownload size={15} /> <span className="hidden sm:inline">Restore</span>
           </button>
           <button className="icon-btn" onClick={onOpenSettings} title="Desk settings" aria-label="Open settings">
@@ -245,7 +245,7 @@ export default function Library({
                         {confirmId === doc.id ? (
                           <span className="flex items-center gap-1.5">
                             <button
-                              className="rounded-md bg-accent px-2 py-1 text-xs font-semibold text-[var(--paper)] transition-transform hover:scale-105"
+                              className="rounded-md bg-accent px-2 py-1 text-xs font-semibold text-[var(--paper)] transition-transform hover:scale-101 active:scale-95"
                               onClick={() => {
                                 setConfirmId(null);
                                 onDelete(doc.id);

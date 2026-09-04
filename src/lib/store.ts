@@ -1,5 +1,5 @@
-import type { AnnotationsState, Bookmark, MarkColor, ReadingFont, Settings, StoredData } from "../data/types";
-import { MARK_COLORS, READING_FONTS } from "../data/types";
+import type { AnnotationsState, Bookmark, MarkColor, ReadingFont, Settings, StoredData } from "../domain/types";
+import { MARK_COLORS, READING_FONTS } from "../domain/types";
 
 export const STORAGE_KEY = "paper-annotate.docs.v1";
 /** Nominal localStorage quota used for the usage meter. */

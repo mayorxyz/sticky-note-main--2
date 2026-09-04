@@ -1,7 +1,7 @@
 import { getDocument, GlobalWorkerOptions, Util } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import type { Highlight, MarkColor, Note, PageData } from "../data/types";
+import type { Highlight, MarkColor, Note, PageData } from "../domain/types";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 

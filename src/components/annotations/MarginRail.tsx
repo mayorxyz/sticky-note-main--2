@@ -1,5 +1,5 @@
 import { useEffect, useState, type PointerEvent, type RefObject } from "react";
-import type { Note, NoteInk } from "../data/types";
+import type { Note, NoteInk } from "../../domain/types";
 import StickyNote from "./StickyNote";
 
 interface RailProps {

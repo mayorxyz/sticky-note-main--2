@@ -1,6 +1,6 @@
-import type { NoteFont, PaperStyle, Settings } from "../data/types";
-import { NOTE_FONTS, PAPER_STYLES, READING_FONTS } from "../data/types";
-import { IconX } from "./icons";
+import type { NoteFont, PaperStyle, Settings } from "../../domain/types";
+import { NOTE_FONTS, PAPER_STYLES, READING_FONTS } from "../../domain/types";
+import { IconX } from "../ui/icons";
 
 interface Props {
   open: boolean;

@@ -1,24 +1,25 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { HashRouter, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import type {
   AnnotationsState,
   Bookmark,
   DocumentRecord,
   Settings,
   StoredData,
-} from "./data/types";
-import { EMPTY_ANNOTATIONS } from "./data/types";
+} from "../domain/types";
+import { EMPTY_ANNOTATIONS } from "../domain/types";
 import {
   downloadBlob,
   loadData,
   saveData,
   storageBytes,
   uid,
-} from "./lib/store";
-import Library, { type BackupPayload } from "./components/Library";
-import DocumentView from "./components/DocumentView";
-import SettingsPage from "./components/Settings";
-import { SAMPLE_MARKDOWN, SAMPLE_TITLE } from "./data/sampleDoc";
+} from "../lib/store";
+import { SAMPLE_MARKDOWN, SAMPLE_TITLE } from "../domain/sampleDoc";
+import LibraryPage from "./routes/LibraryPage";
+import DocPage from "./routes/DocPage";
+import SettingsRoute from "./routes/SettingsPage";
+import type { BackupPayload } from "../components/library/Library";
 
 interface Toast {
   id: string;
@@ -303,123 +304,5 @@ export default function App() {
         ))}
       </div>
     </HashRouter>
-  );
-}
-
-/* ————— route pages ————— */
-
-function LibraryPage({
-  data,
-  resolvedTheme,
-  onToggleTheme,
-  onDelete,
-  onIngest,
-  onImportBackup,
-  onSample,
-  onToast,
-  onRename,
-}: {
-  data: StoredData;
-  resolvedTheme: "light" | "dark" | "black";
-  onToggleTheme: () => void;
-  onDelete: (id: string) => void;
-  onIngest: (doc: DocumentRecord, ann: AnnotationsState) => void;
-  onImportBackup: (p: BackupPayload) => void;
-  onSample: () => string;
-  onToast: (msg: string) => void;
-  onRename: (id: string, title: string) => void;
-}) {
-  const navigate = useNavigate();
-  return (
-    <Library
-      docs={data.docs}
-      annotations={data.annotations}
-      resolvedTheme={resolvedTheme}
-      onToggleTheme={onToggleTheme}
-      onOpenSettings={() => navigate("/settings")}
-      onOpen={(id) => navigate(`/doc/${id}`)}
-      onDelete={onDelete}
-      onRename={onRename}
-      onIngest={(doc, ann) => {
-        onIngest(doc, ann);
-        navigate(`/doc/${doc.id}`);
-      }}
-      onImportBackup={onImportBackup}
-      onSample={() => navigate(`/doc/${onSample()}`)}
-      onToast={onToast}
-    />
-  );
-}
-
-function DocPage({
-  data,
-  settings,
-  resolvedTheme,
-  onToggleTheme,
-  onAnnotationsChange,
-  onDocChange,
-  onBookmarkAdd,
-  onBookmarkDelete,
-  onPatchSettings,
-  onToast,
-}: {
-  data: StoredData;
-  settings: Settings;
-  resolvedTheme: "light" | "dark" | "black";
-  onToggleTheme: () => void;
-  onAnnotationsChange: (docId: string, ann: AnnotationsState) => void;
-  onDocChange: (doc: DocumentRecord) => void;
-  onBookmarkAdd: (bm: Bookmark) => void;
-  onBookmarkDelete: (id: string) => void;
-  onPatchSettings: (patch: Partial<Settings>) => void;
-  onToast: (msg: string) => void;
-}) {
-  const { id } = useParams();
-  const navigate = useNavigate();
-  const doc = data.docs.find((d) => d.id === id);
-  if (!doc) return <Navigate to="/" replace />;
-  return (
-    <DocumentView
-      doc={doc}
-      annotations={data.annotations[doc.id] ?? { highlights: [], notes: [] }}
-      bookmarks={data.bookmarks.filter((b) => b.docId === doc.id)}
-      settings={settings}
-      onAnnotationsChange={onAnnotationsChange}
-      onDocChange={onDocChange}
-      onBookmarkAdd={onBookmarkAdd}
-      onBookmarkDelete={onBookmarkDelete}
-      onPatchSettings={onPatchSettings}
-      onBack={() => navigate(-1)}
-      onOpenSettings={() => navigate("/settings")}
-      resolvedTheme={resolvedTheme}
-      onToggleTheme={onToggleTheme}
-      onToast={onToast}
-    />
-  );
-}
-
-function SettingsRoute({
-  settings,
-  bytes,
-  onPatch,
-  onExportAll,
-  onClearAll,
-}: {
-  settings: Settings;
-  bytes: number;
-  onPatch: (patch: Partial<Settings>) => void;
-  onExportAll: () => void;
-  onClearAll: () => void;
-}) {
-  const navigate = useNavigate();
-  return (
-    <SettingsPage
-      settings={settings}
-      storageBytes={bytes}
-      onPatch={onPatch}
-      onBack={() => navigate(-1)}
-      onExportAll={onExportAll}
-      onClearAll={onClearAll}
-    />
   );
 }

@@ -1,12 +1,13 @@
 import {
+  useEffect,
   useRef,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject,
 } from "react";
-import type { Highlight, MarkColor, MarkType } from "../data/types";
-import { lexMarkdown, makeSlugger, plainTextOfTokens } from "../lib/markdown";
+import type { Highlight, MarkColor, MarkType } from "../../domain/types";
+import { lexMarkdown, makeSlugger, plainTextOfTokens } from "../../lib/markdown";
 import type { Token, Tokens } from "marked";
 
 interface TextMark {
@@ -400,6 +401,19 @@ export default function ReflowCanvas({
       });
     });
   }
+
+  useEffect(() => {
+    const check = () => scheduleSelectionCheck();
+    document.addEventListener("selectionchange", check);
+    document.addEventListener("touchend", check);
+    window.addEventListener("pointerup", check);
+    return () => {
+      document.removeEventListener("selectionchange", check);
+      document.removeEventListener("touchend", check);
+      window.removeEventListener("pointerup", check);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onSelect]);
 
   return (
     <article

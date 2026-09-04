@@ -1,5 +1,5 @@
-import type { Bookmark } from "../data/types";
-import { IconBookmark, IconClock, IconX } from "./icons";
+import type { Bookmark } from "../../domain/types";
+import { IconBookmark, IconClock, IconX } from "../ui/icons";
 
 export interface RailEntry {
   id: string;
@@ -92,7 +92,7 @@ export default function TocRail({
                   <span className="truncate">{bm.label}</span>
                 </button>
                 <button
-                  className="icon-btn !h-6 !w-6 opacity-0 transition-opacity group-hover:opacity-100"
+                  className="icon-btn !h-8 !w-8 lg:!h-6 lg:!w-6 lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100"
                   aria-label={`Remove bookmark ${bm.label}`}
                   onClick={() => onDeleteBookmark?.(bm.id)}
                 >

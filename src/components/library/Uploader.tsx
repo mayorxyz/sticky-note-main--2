@@ -1,10 +1,10 @@
 import { useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent } from "react";
-import type { AnnotationsState, DocumentRecord, RenderMode } from "../data/types";
-import { EMPTY_ANNOTATIONS } from "../data/types";
-import { ingestPdf } from "../lib/pdf";
-import { convertDocument } from "../lib/documentFormats";
-import { uid } from "../lib/store";
-import { IconClip, IconLayout, IconPaste, IconRows, IconSpin, IconUpload } from "./icons";
+import type { AnnotationsState, DocumentRecord, RenderMode } from "../../domain/types";
+import { EMPTY_ANNOTATIONS } from "../../domain/types";
+import { ingestPdf } from "../../lib/pdf";
+import { convertDocument } from "../../lib/documentFormats";
+import { uid } from "../../lib/store";
+import { IconClip, IconLayout, IconPaste, IconRows, IconSpin, IconUpload } from "../ui/icons";
 
 const ACCEPT = ".pdf,.txt,.md,.markdown,.docx,.rtf,.html,.htm,.csv,.tsv,.epub,.odt";
 const SUPPORTED_FILE_RE = /\.(pdf|txt|md|markdown|docx|rtf|html|htm|csv|tsv|epub|odt)$/i;

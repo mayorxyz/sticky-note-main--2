@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import useMediaQuery from "../../hooks/useMediaQuery";
 import { Rnd } from "react-rnd";
 import type {
   AnnotationsState,
@@ -20,12 +21,12 @@ import type {
   PageData,
   Placement,
   Settings,
-} from "../data/types";
-import { MARK_COLORS, MARK_TYPES, READING_FONTS } from "../data/types";
-import { useHistory } from "../lib/undo";
-import { copyToClipboard, uid } from "../lib/store";
-import { makeThumb, openPdf, renderPages } from "../lib/pdf";
-import { extractToc, lexMarkdown, plainTextOfTokens, readingStats } from "../lib/markdown";
+} from "../../domain/types";
+import { MARK_COLORS, MARK_TYPES, READING_FONTS } from "../../domain/types";
+import { useHistory } from "../../hooks/useHistory";
+import { copyToClipboard, uid } from "../../lib/store";
+import { makeThumb, openPdf, renderPages } from "../../lib/pdf";
+import { extractToc, lexMarkdown, plainTextOfTokens, readingStats } from "../../lib/markdown";
 import ReflowCanvas, {
   flashRect,
   offsetAtPoint,
@@ -33,13 +34,13 @@ import ReflowCanvas, {
   type ReflowSelection,
 } from "./ReflowCanvas";
 import LayoutCanvas, { type LayoutSelection } from "./LayoutCanvas";
-import StickyNote from "./StickyNote";
-import { ConnectorLayer, MarginRail } from "./MarginRail";
-import TocRail, { type RailEntry } from "./TocRail";
+import StickyNote from "../annotations/StickyNote";
+import { ConnectorLayer, MarginRail } from "../annotations/MarginRail";
+import TocRail, { type RailEntry } from "../rails/TocRail";
 import SearchBar, { type SearchSource } from "./SearchBar";
 import ExportMenu from "./ExportMenu";
-import QuickStylePanel from "./QuickStylePanel";
-import { EditableTitle } from "./EditableTitle";
+import QuickStylePanel from "../settings/QuickStylePanel";
+import { EditableTitle } from "../ui/EditableTitle";
 import {
   IconArrowLeft,
   IconBookmark,
@@ -72,7 +73,7 @@ import {
   IconX,
   IconZoomIn,
   IconZoomOut,
-} from "./icons";
+} from "../ui/icons";
 
 type SelPayload = ({ kind: "text" } & ReflowSelection) | ({ kind: "page" } & LayoutSelection);
 
@@ -94,17 +95,6 @@ interface Props {
   onRename?: (id: string, title: string) => void;
 }
 
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const fn = () => setMatches(mq.matches);
-    mq.addEventListener("change", fn);
-    return () => mq.removeEventListener("change", fn);
-  }, [query]);
-  return matches;
-}
-
 const MARK_ICON: Record<MarkType, (p: { size?: number }) => ReactNode> = {
   highlight: (p) => <IconHighlighter {...p} />,
   underline: (p) => <IconUnderline {...p} />,
@@ -114,8 +104,8 @@ const MARK_ICON: Record<MarkType, (p: { size?: number }) => ReactNode> = {
   circle: (p) => <IconCircle {...p} />,
 };
 
-const IconEraser = ({ size = 16 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+const IconEraser = ({ size = 16, className }: { size?: number; className?: string }) => (
+  <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L21 10C21.5 10.5 21.5 11.5 21 12L11 20" />
     <path d="M14 7L17 10" />
   </svg>
@@ -175,6 +165,7 @@ export default function DocumentView({
   const markMenuRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<MarkType>("highlight");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectMode, setSelectMode] = useState(false);
   const [activeHeading, setActiveHeading] = useState<string | null>(null);
   const [activePage, setActivePage] = useState(1);
   const [progress, setProgress] = useState(0);
@@ -218,10 +209,11 @@ export default function DocumentView({
       setBookmarkOpen(false);
       setQuickOpen(false);
       setEraserOpen(false);
+      setSelectMode(false);
+      setSelectedIds(new Set());
     }
   }, [focusMode]);
 
-  // Reset grab mode when zoom goes back to normal or mode switches
   useEffect(() => {
     if (zoom <= 1) {
       setGrabMode(false);
@@ -229,6 +221,64 @@ export default function DocumentView({
       isPanning.current = false;
     }
   }, [zoom, doc.mode]);
+
+  /* ————— Touch Selection Handler (waits for the selection to settle) ————— */
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastSelectionText = "";
+
+    const fireIfStable = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || selection.toString().trim().length === 0) return;
+      const text = selection.toString();
+      // If the selection changed again while we were waiting, it's still being dragged — don't fire yet.
+      if (text !== lastSelectionText) return;
+      const anchorNode = selection.anchorNode;
+      if (!anchorNode || !el.contains(anchorNode)) return;
+      try {
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        if (rect && rect.width > 0) {
+          const mouseEvent = new MouseEvent("mouseup", {
+            bubbles: true,
+            cancelable: true,
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+          });
+          el.dispatchEvent(mouseEvent);
+        }
+      } catch {
+        // Ignore range errors if selection is detached
+      }
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      if (e.pointerType !== "touch" && !isMobile) return;
+      const selection = window.getSelection();
+      lastSelectionText = selection ? selection.toString() : "";
+      if (settleTimer) clearTimeout(settleTimer);
+      // Wait for the browser's native selection handles to finish adjusting before
+      // showing the toolbar, so it doesn't pop up mid-drag on mobile.
+      settleTimer = setTimeout(fireIfStable, 260);
+    };
+
+    const handleSelectionChange = () => {
+      if (!settleTimer) return;
+      // Selection is still moving (handle drag) — push the fire time back out.
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(fireIfStable, 260);
+    };
+
+    el.addEventListener("pointerup", handlePointerUp);
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      el.removeEventListener("pointerup", handlePointerUp);
+      document.removeEventListener("selectionchange", handleSelectionChange);
+      if (settleTimer) clearTimeout(settleTimer);
+    };
+  }, [isMobile, doc.mode]);
 
   /* ————— settings-derived ————— */
 
@@ -251,7 +301,7 @@ export default function DocumentView({
   }, [highlights, settings.highlightLabels]);
 
   const readingWidth = settings.readingWidth + (settings.orientation === "landscape" ? 150 : 0);
-  
+
   const readingStyle = {
     "--reading-size": `${settings.readingFontSize * zoom}px`,
     "--reading-font": READING_FONTS.find((font) => font.key === settings.readingFont)?.css ?? "var(--font-body)",
@@ -368,9 +418,10 @@ export default function DocumentView({
 
       const nextHighlights = highlights.filter((h) => {
         if (h.anchor.kind !== "page" || h.anchor.page !== page) return true;
+        const { rects: highlightRects } = h.anchor;
 
         const intersects = rects.some((selRect) =>
-          h.anchor.rects.some((hRect) => {
+          highlightRects.some((hRect) => {
             return !(
               hRect.x > selRect.x + selRect.w ||
               hRect.x + hRect.w < selRect.x ||
@@ -584,6 +635,7 @@ export default function DocumentView({
       notes: a.notes.filter((n) => !n.highlightId || !ids.has(n.highlightId)),
     }));
     setSelectedIds(new Set());
+    setSelectMode(false);
     onToast(`Tore up ${ids.size} mark${ids.size === 1 ? "" : "s"}.`);
   }
 
@@ -719,7 +771,7 @@ export default function DocumentView({
         return;
       }
       if (typing) return;
-      
+
       if (e.key === "Escape") {
         if (focusMode) {
           setFocusMode(false);
@@ -731,6 +783,7 @@ export default function DocumentView({
         setMobileMore(false);
         setBookmarkOpen(false);
         setEraserOpen(false);
+        setSelectMode(false);
         setSelectedIds(new Set());
         return;
       }
@@ -797,7 +850,7 @@ export default function DocumentView({
     if (!selPayload && !markMenu) return;
     function onOutside(e: PointerEvent) {
       const t = e.target as Node;
-      if (toolbarRef.current?.contains(t)) return; 
+      if (toolbarRef.current?.contains(t)) return;
       if (markMenuRef.current?.contains(t)) return;
       if ((t as HTMLElement).closest?.('.pa-mark, [data-note-anchor]')) return;
       setSelPayload(null);
@@ -895,7 +948,7 @@ export default function DocumentView({
   /* ————— mode switching ————— */
   function switchMode(mode: "reflow" | "layout") {
     if (mode === doc.mode) return;
-    setZoom(1); 
+    setZoom(1);
     if (mode === "layout" && !doc.pages) {
       setNeedsAttach(true);
       onDocChange({ ...doc, mode: "layout" });
@@ -928,36 +981,53 @@ export default function DocumentView({
   }
 
   /* ————— popover positioning (viewport-clamped) ————— */
-  const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
-  const vh = typeof window !== "undefined" ? window.innerHeight : 768;
-  const tbWidth = Math.min(560, vw - 16);
+  const [viewport, setViewport] = useState(() => ({
+    w: typeof window !== "undefined" ? window.innerWidth : 1024,
+    h: typeof window !== "undefined" ? window.innerHeight : 768,
+  }));
+  useEffect(() => {
+    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, []);
+  const vw = viewport.w;
+  const vh = viewport.h;
+  // Reserve a small edge margin so the toolbar never touches or crosses the screen edge.
+  const EDGE = 10;
+  const tbWidth = Math.min(560, vw - EDGE * 2);
   const tbLeft = selPayload
-    ? Math.min(Math.max(8, selPayload.rect.left + selPayload.rect.width / 2 - tbWidth / 2), vw - tbWidth - 8)
+    ? Math.min(Math.max(EDGE, selPayload.rect.left + selPayload.rect.width / 2 - tbWidth / 2), vw - tbWidth - EDGE)
     : 0;
+
   const tbTop = selPayload
-    ? selPayload.rect.top > 140
-      ? Math.max(8, selPayload.rect.top - 60)
-      : Math.min(selPayload.rect.bottom + 12, vh - 110)
+    ? selPayload.rect.top > vh * 0.4
+      ? Math.max(EDGE, selPayload.rect.top - 60)
+      : Math.min(selPayload.rect.bottom + 12, vh - 150)
     : 0;
 
   const markMenuHl = markMenu ? highlights.find((h) => h.id === markMenu.id) : undefined;
   const markMenuNote = markMenu ? notes.find((n) => n.highlightId === markMenu.id) : undefined;
+  const markMenuWidth = Math.min(280, vw - EDGE * 2);
+  const markMenuLeft = markMenu ? Math.min(Math.max(EDGE, markMenu.x), vw - markMenuWidth - EDGE) : 0;
+  const markMenuTop = markMenu ? Math.min(Math.max(EDGE, markMenu.y), vh - 240) : 0;
   const docPlacement = doc.notePlacement ?? settings.defaultNotePlacement;
   const liftedNote = lift ? notes.find((n) => n.id === lift.id) : undefined;
 
   /* ————— shared handlers ————— */
 
-  function handleMarkClick(id: string, ev: ReactMouseEvent) {
-    if (ev.shiftKey) {
+  function handleMarkClick(id: string, ev: ReactMouseEvent | ReactPointerEvent) {
+    if (selectMode || (ev as any).shiftKey) {
       toggleSelect(id);
       return;
     }
+    const clientX = (ev as any).clientX;
+    const clientY = (ev as any).clientY;
     setSelPayload(null);
-    setMarkMenu({
-      id,
-      x: Math.min(Math.max(8, ev.clientX), vw - 280),
-      y: Math.min(Math.max(8, ev.clientY + 6), vh - 280),
-    });
+    setMarkMenu({ id, x: clientX, y: clientY });
   }
 
   /* ————— Pan Handlers (double-click to activate) ————— */
@@ -1019,18 +1089,18 @@ export default function DocumentView({
       style={{ "--note-size": `${settings.noteFontSize}px` } as CSSProperties}
     >
       {!focusMode && (
-        <header className="no-print relative z-40 border-b border-[rgba(var(--shadow-ink),0.16)] bg-[var(--paper)]/95 px-3 py-2 backdrop-blur-sm sm:px-5">
-          <div className="mx-auto flex max-w-[110rem] items-center gap-1.5">
-            <button className="icon-btn" onClick={onBack} title="Back to the library" aria-label="Back to library">
+        <header className="no-print relative z-40 border-b border-[rgba(var(--shadow-ink),0.16)] bg-[var(--paper)]/95 px-2 py-1.5 backdrop-blur-sm sm:px-5 sm:py-2">
+          <div className="mx-auto flex max-w-[110rem] items-center gap-0.5 sm:gap-1.5">
+            <button className="icon-btn !h-9 !w-9 sm:!h-11 sm:!w-11 shrink-0" onClick={onBack} title="Back to the library" aria-label="Back to library">
               <IconArrowLeft size={18} />
             </button>
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate font-display text-base font-bold leading-tight text-ink sm:text-lg w-full">
+            <div className="min-w-0 flex-1 overflow-hidden">
+              <h1 className="min-w-0 max-w-full truncate font-display text-sm font-bold leading-tight text-ink sm:text-lg">
                 <EditableTitle
                   text={doc.title}
                   onSave={handleRename}
-                  className="truncate block"
-                  inputClassName="font-display text-base font-bold leading-tight text-ink sm:text-lg w-full bg-transparent outline-none border-b border-accent"
+                  className="block max-w-full truncate"
+                  inputClassName="block w-full min-h-[44px] rounded-md border border-accent bg-[var(--paper)] p-2 font-display text-base font-bold leading-tight text-ink outline-none focus:bg-[rgba(var(--shadow-ink),0.05)] sm:text-lg"
                 />
               </h1>
               <p className="hidden text-[0.62rem] font-medium uppercase tracking-[0.16em] text-ink-faint md:block">
@@ -1038,7 +1108,7 @@ export default function DocumentView({
               </p>
             </div>
 
-            <div className="hidden items-center gap-1.5 md:flex">
+            <div className="hidden items-center gap-1 sm:gap-1.5 md:flex">
               {doc.sourceType === "pdf" && (
                 <div className="hidden items-center gap-0.5 rounded-lg border border-line p-0.5 lg:flex" role="group" aria-label="Render mode">
                   <button
@@ -1066,132 +1136,147 @@ export default function DocumentView({
 
               <div className="flex items-center gap-0.5 rounded-lg border border-line p-0.5" role="group" aria-label="Page zoom">
                 <button
-                  className="icon-btn !h-7 !w-7"
+                  className="icon-btn !h-11 !w-11"
                   onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.15) * 100) / 100))}
                   disabled={zoom <= 0.5}
                   title="Zoom out"
                   aria-label="Zoom out"
                 >
-                  <IconZoomOut size={15} />
+                  <IconZoomOut size={18} />
                 </button>
                 <span className="w-11 text-center font-display text-xs font-bold text-ink-soft">{Math.round(zoom * 100)}%</span>
                 <button
-                  className="icon-btn !h-7 !w-7"
+                  className="icon-btn !h-11 !w-11"
                   onClick={() => setZoom((z) => Math.min(2.5, Math.round((z + 0.15) * 100) / 100))}
                   disabled={zoom >= 2.5}
                   title="Zoom in"
                   aria-label="Zoom in"
                 >
-                  <IconZoomIn size={15} />
+                  <IconZoomIn size={18} />
                 </button>
               </div>
 
               <button
-                className={`icon-btn ${!isMobile && docPlacement === "freeform" ? "on" : ""}`}
+                className={`icon-btn !h-11 !w-11 ${!isMobile && docPlacement === "freeform" ? "on" : ""}`}
                 title={`New notes default to ${docPlacement} — click to switch`}
                 aria-label="Toggle default note placement"
                 onClick={() =>
                   onDocChange({ ...doc, notePlacement: docPlacement === "margin" ? "freeform" : "margin" })
                 }
               >
-                {docPlacement === "margin" ? <IconRows size={17} /> : <IconMove size={17} />}
+                {docPlacement === "margin" ? <IconRows size={18} /> : <IconMove size={18} />}
               </button>
 
               <div className="relative">
                 <button
-                  className={`icon-btn ${bookmarkOpen ? "on" : ""}`}
+                  className={`icon-btn !h-11 !w-11 ${bookmarkOpen ? "on" : ""}`}
                   onClick={() => setBookmarkOpen((v) => !v)}
                   title="Bookmark the current spot"
                   aria-label="Bookmark current position"
                   aria-expanded={bookmarkOpen}
                 >
-                  <IconBookmark size={17} />
+                  <IconBookmark size={20} />
                 </button>
               </div>
 
               <button
-                className={`icon-btn ${focusMode ? "on" : ""}`}
+                className={`icon-btn !h-11 !w-11 ${focusMode ? "on" : ""}`}
                 onClick={() => setFocusMode((v) => !v)}
                 title="Focus mode — dim everything not in view (Press Esc to exit)"
                 aria-pressed={focusMode}
                 aria-label="Toggle focus mode"
               >
-                <IconFocus size={17} />
+                <IconFocus size={20} />
               </button>
 
               <button
-                className={`icon-btn ${quickOpen ? "on" : ""}`}
+                className={`icon-btn !h-11 !w-11 ${quickOpen ? "on" : ""}`}
                 onClick={() => setQuickOpen((v) => !v)}
                 title="Quick style — paper, hand, sizes"
                 aria-label="Open quick style panel"
               >
-                <IconPen size={17} />
+                <IconPen size={20} />
               </button>
             </div>
 
-            <div className="relative">
+            {/* Mobile: search + clean-view only in the bar; everything else lives in the "more" sheet */}
+            <div className="relative shrink-0 md:hidden">
               <button
-                className={`icon-btn ${searchOpen ? "on" : ""}`}
+                className={`icon-btn !h-9 !w-9 ${searchOpen ? "on" : ""}`}
                 onClick={() => setSearchOpen((v) => !v)}
                 title="Search the document"
                 aria-label="Search within document"
                 aria-expanded={searchOpen}
               >
-                <IconSearch size={17} />
+                <IconSearch size={18} />
+              </button>
+            </div>
+
+            <div className="relative hidden shrink-0 md:block">
+              <button
+                className={`icon-btn !h-11 !w-11 ${searchOpen ? "on" : ""}`}
+                onClick={() => setSearchOpen((v) => !v)}
+                title="Search the document"
+                aria-label="Search within document"
+                aria-expanded={searchOpen}
+              >
+                <IconSearch size={20} />
               </button>
               {searchOpen && (
-                <SearchBar
-                  source={searchSource}
-                  onClose={() => setSearchOpen(false)}
-                  onJumpText={(offset) => {
-                    if (articleRef.current) scrollToOffset(articleRef.current, offset);
-                  }}
-                  onJumpPage={(page, rect) => jumpPage(page, rect)}
-                />
+                <div className="absolute right-0 top-10 z-50">
+                  <SearchBar
+                    source={searchSource}
+                    onClose={() => setSearchOpen(false)}
+                    onJumpText={(offset) => {
+                      if (articleRef.current) scrollToOffset(articleRef.current, offset);
+                    }}
+                    onJumpPage={(page, rect) => jumpPage(page, rect)}
+                  />
+                </div>
               )}
             </div>
 
             <button
-              className={`icon-btn ${clean ? "on" : ""}`}
+              className={`icon-btn !h-9 !w-9 sm:!h-11 sm:!w-11 shrink-0 ${clean ? "on" : ""}`}
               onClick={() => setClean((v) => !v)}
               title={clean ? "Bring the annotations back" : "Clean reading view — hide marks & notes"}
               aria-pressed={clean}
               aria-label="Toggle clean reading view"
             >
-              {clean ? <IconEyeOff size={17} /> : <IconEye size={17} />}
+              {clean ? <IconEyeOff size={18} /> : <IconEye size={18} />}
             </button>
 
-            <div className="relative">
+            <div className="relative hidden shrink-0 md:block">
               <button
-                className={`icon-btn ${eraserOpen ? "on" : ""}`}
+                className={`icon-btn !h-11 !w-11 ${eraserOpen ? "on" : ""}`}
                 onClick={() => setEraserOpen((v) => !v)}
                 title="Erase marks by type"
                 aria-label="Erase marks"
                 aria-expanded={eraserOpen}
               >
-                <IconTrash size={17} />
+                <IconTrash size={20} />
               </button>
               {eraserOpen && (
                 <>
                   <div className="fixed inset-0 z-[64]" onClick={() => setEraserOpen(false)} aria-hidden="true" />
-                  <div className="pop absolute right-0 top-10 z-[70] w-52 rounded-lg border border-line bg-sheet p-1.5 shadow-[0_14px_34px_-12px_rgba(var(--shadow-ink),0.55)]">
-                    <p className="px-2 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-ink-faint">
+                  <div className="pop absolute right-0 top-10 z-[70] w-72 rounded-lg border border-line bg-sheet p-2 shadow-[0_14px_34px_-12px_rgba(var(--shadow-ink),0.55)]">
+                    <p className="px-3 py-2 text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-ink-faint">
                       Erase from document
                     </p>
                     {[
-                      { type: "highlight" as const, label: "Highlights", icon: <IconHighlighter size={14} /> },
-                      { type: "underline" as const, label: "Underlines", icon: <IconUnderline size={14} /> },
-                      { type: "strikethrough" as const, label: "Strikethroughs", icon: <IconStrike size={14} /> },
-                      { type: "squiggly" as const, label: "Squiggles", icon: <IconSquiggle size={14} /> },
-                      { type: "box" as const, label: "Boxes", icon: <IconBox size={14} /> },
-                      { type: "circle" as const, label: "Circles", icon: <IconCircle size={14} /> },
+                      { type: "highlight" as const, label: "Highlights", icon: <IconHighlighter size={16} /> },
+                      { type: "underline" as const, label: "Underlines", icon: <IconUnderline size={16} /> },
+                      { type: "strikethrough" as const, label: "Strikethroughs", icon: <IconStrike size={16} /> },
+                      { type: "squiggly" as const, label: "Squiggles", icon: <IconSquiggle size={16} /> },
+                      { type: "box" as const, label: "Boxes", icon: <IconBox size={16} /> },
+                      { type: "circle" as const, label: "Circles", icon: <IconCircle size={16} /> },
                     ].map((item) => {
                       const count = highlights.filter((h) => h.type === item.type).length;
                       return (
                         <button
                           key={item.type}
                           disabled={count === 0}
-                          className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium text-ink-soft transition-colors hover:bg-[rgba(var(--shadow-ink),0.06)] hover:text-ink disabled:opacity-30 disabled:cursor-not-allowed"
+                          className="flex w-full min-h-[44px] items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-ink-soft transition-colors hover:bg-[rgba(var(--shadow-ink),0.06)] hover:text-ink disabled:opacity-30 disabled:cursor-not-allowed"
                           onClick={() => {
                             clearMarks(item.type);
                             setEraserOpen(false);
@@ -1207,14 +1292,14 @@ export default function DocumentView({
                     <div className="my-1 h-px bg-line" />
                     <button
                       disabled={highlights.length === 0}
-                      className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs font-semibold text-accent-deep transition-colors hover:bg-[var(--hl-rose)] disabled:opacity-30 disabled:cursor-not-allowed"
+                      className="flex w-full min-h-[44px] items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold text-accent-deep transition-colors hover:bg-[var(--hl-rose)] disabled:opacity-30 disabled:cursor-not-allowed"
                       onClick={() => {
                         clearMarks("all");
                         setEraserOpen(false);
                       }}
                     >
                       <span className="flex items-center gap-2">
-                        <IconTrash size={14} /> Clear All Marks
+                        <IconTrash size={16} /> Clear All Marks
                       </span>
                       <span className="text-[0.65rem] opacity-80">{highlights.length}</span>
                     </button>
@@ -1225,28 +1310,28 @@ export default function DocumentView({
 
             <span className="mx-0.5 hidden h-5 w-px bg-line md:block" aria-hidden="true" />
 
-            <div className="hidden items-center gap-1.5 md:flex">
-              <button className="icon-btn" onClick={hist.undo} disabled={!hist.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
-                <IconUndo size={17} />
+            <div className="hidden items-center gap-1 sm:gap-1.5 md:flex">
+              <button className="icon-btn !h-11 !w-11" onClick={hist.undo} disabled={!hist.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
+                <IconUndo size={20} />
               </button>
-              <button className="icon-btn" onClick={hist.redo} disabled={!hist.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
-                <IconRedo size={17} />
+              <button className="icon-btn !h-11 !w-11" onClick={hist.redo} disabled={!hist.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+                <IconRedo size={20} />
               </button>
               <span className="mx-0.5 h-5 w-px bg-line" aria-hidden="true" />
               <ExportMenu doc={doc} annotations={hist.present} preferred={settings.defaultExportFormat} onToast={onToast} />
-              <button className="icon-btn" onClick={onOpenSettings} title="Desk settings" aria-label="Open settings">
-                <IconGear size={17} />
+              <button className="icon-btn !h-11 !w-11" onClick={onOpenSettings} title="Desk settings" aria-label="Open settings">
+                <IconGear size={20} />
               </button>
-              <button className="icon-btn" onClick={onToggleTheme} title="Quick paper-tone switch" aria-label="Toggle dark mode">
-                {resolvedTheme === "light" ? <IconMoon size={17} /> : <IconSun size={17} />}
+              <button className="icon-btn !h-11 !w-11" onClick={onToggleTheme} title="Quick paper-tone switch" aria-label="Toggle dark mode">
+                {resolvedTheme === "light" ? <IconMoon size={20} /> : <IconSun size={20} />}
               </button>
             </div>
 
-            <div className="relative md:hidden">
+            <div className="relative shrink-0 md:hidden">
               <ExportMenu doc={doc} annotations={hist.present} preferred={settings.defaultExportFormat} onToast={onToast} />
             </div>
             <button
-              className={`icon-btn md:hidden ${mobileMore ? "on" : ""}`}
+              className={`icon-btn !h-9 !w-9 shrink-0 md:hidden ${mobileMore ? "on" : ""}`}
               onClick={() => setMobileMore((v) => !v)}
               aria-label="More actions"
               aria-expanded={mobileMore}
@@ -1254,6 +1339,19 @@ export default function DocumentView({
               <IconDots size={18} />
             </button>
           </div>
+
+          {searchOpen && (
+            <div className="fixed inset-x-2 top-[3.1rem] z-50 md:hidden">
+              <SearchBar
+                source={searchSource}
+                onClose={() => setSearchOpen(false)}
+                onJumpText={(offset) => {
+                  if (articleRef.current) scrollToOffset(articleRef.current, offset);
+                }}
+                onJumpPage={(page, rect) => jumpPage(page, rect)}
+              />
+            </div>
+          )}
 
           {(allTags.length > 0 || hasResolved) && (
             <div className="mx-auto mt-1.5 flex max-w-[110rem] flex-wrap items-center gap-1.5">
@@ -1266,21 +1364,21 @@ export default function DocumentView({
                   <button
                     key={t}
                     onClick={() => setTagFilter((f) => (on ? f.filter((x) => x !== t) : [...f, t]))}
-                    className={`rounded-full border px-2 py-0.5 text-[0.68rem] font-semibold transition-all ${
+                    className={`min-h-[36px] rounded-full border px-3 py-1 text-xs sm:min-h-[44px] sm:text-sm font-semibold transition-all flex items-center ${
                       on
                         ? "border-accent bg-accent text-[var(--paper)]"
                         : "border-line bg-transparent text-ink-soft hover:border-ink-faint hover:text-ink"
                     }`}
                     aria-pressed={on}
                   >
-                    #{t} <span className="opacity-70">{count}</span>
+                    #{t} <span className="opacity-70 ml-1">{count}</span>
                   </button>
                 );
               })}
               {hasResolved && (
                 <button
                   onClick={() => setHideResolved((v) => !v)}
-                  className={`rounded-full border px-2 py-0.5 text-[0.68rem] font-semibold transition-all ${
+                  className={`min-h-[36px] rounded-full border px-3 py-1 text-xs sm:min-h-[44px] sm:text-sm font-semibold transition-all flex items-center ${
                     hideResolved
                       ? "border-accent bg-accent text-[var(--paper)]"
                       : "border-line text-ink-soft hover:border-ink-faint hover:text-ink"
@@ -1293,7 +1391,7 @@ export default function DocumentView({
               )}
               {(tagFilter.length > 0 || hideResolved) && (
                 <button
-                  className="text-[0.68rem] font-semibold text-accent-deep underline-offset-2 hover:underline"
+                  className="min-h-[36px] text-xs sm:min-h-[44px] sm:text-sm font-semibold text-accent-deep underline-offset-2 hover:underline flex items-center px-2"
                   onClick={() => {
                     setTagFilter([]);
                     setHideResolved(false);
@@ -1310,13 +1408,13 @@ export default function DocumentView({
       {!focusMode && mobileMore && (
         <>
           <div className="fixed inset-0 z-[64]" onClick={() => setMobileMore(false)} aria-hidden="true" />
-          <div className="pop fixed right-2 top-14 z-[70] w-64 rounded-lg border border-line bg-sheet p-2 shadow-[0_18px_40px_-14px_rgba(var(--shadow-ink),0.55)]">
+          <div className="pop fixed inset-x-2 top-[3.1rem] z-[70] max-h-[calc(100dvh-80px)] overflow-y-auto rounded-lg border border-line bg-sheet p-2 shadow-[0_18px_40px_-14px_rgba(var(--shadow-ink),0.55)] sm:right-2 sm:left-auto sm:w-72">
             {doc.sourceType === "pdf" && (
               <div className="mb-1.5 flex gap-1">
                 {(["layout", "reflow"] as const).map((m) => (
                   <button
                     key={m}
-                    className={`flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold ${
+                    className={`flex flex-1 min-h-[44px] items-center justify-center gap-1 rounded-md px-2 py-1.5 text-sm font-semibold ${
                       doc.mode === m ? "bg-ink text-paper" : "text-ink-soft hover:bg-[rgba(var(--shadow-ink),0.06)]"
                     }`}
                     onClick={() => {
@@ -1324,63 +1422,116 @@ export default function DocumentView({
                       setMobileMore(false);
                     }}
                   >
-                    {m === "layout" ? <IconLayout size={13} /> : <IconRows size={13} />} {m}
+                    {m === "layout" ? <IconLayout size={15} /> : <IconRows size={15} />} {m}
                   </button>
                 ))}
               </div>
             )}
             <div className="mb-1.5 flex items-center justify-between rounded-md border border-line px-2 py-1">
-              <button className="icon-btn !h-7 !w-7" onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.15) * 100) / 100))} aria-label="Zoom out">
-                <IconZoomOut size={15} />
+              <button className="icon-btn !h-11 !w-11" onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.15) * 100) / 100))} aria-label="Zoom out">
+                <IconZoomOut size={18} />
               </button>
-              <span className="font-display text-xs font-bold text-ink">{Math.round(zoom * 100)}%</span>
-              <button className="icon-btn !h-7 !w-7" onClick={() => setZoom((z) => Math.min(2.5, Math.round((z + 0.15) * 100) / 100))} aria-label="Zoom in">
-                <IconZoomIn size={15} />
+              <span className="font-display text-sm font-bold text-ink">{Math.round(zoom * 100)}%</span>
+              <button className="icon-btn !h-11 !w-11" onClick={() => setZoom((z) => Math.min(2.5, Math.round((z + 0.15) * 100) / 100))} aria-label="Zoom in">
+                <IconZoomIn size={18} />
               </button>
             </div>
             {[
               {
                 label: docPlacement === "margin" ? "Notes → freeform" : "Notes → margin rail",
-                icon: docPlacement === "margin" ? <IconMove size={15} /> : <IconRows size={15} />,
+                icon: docPlacement === "margin" ? <IconMove size={18} /> : <IconRows size={18} />,
                 act: () => onDocChange({ ...doc, notePlacement: docPlacement === "margin" ? "freeform" : "margin" }),
               },
               {
+                label: selectMode ? "Exit select mode" : "Multi-select marks",
+                icon: selectMode ? <IconX size={18} /> : <IconBox size={18} />,
+                act: () => {
+                  setSelectMode(v => {
+                    const next = !v;
+                    if (!next) setSelectedIds(new Set());
+                    return next;
+                  });
+                },
+              },
+              {
                 label: focusMode ? "Focus mode off" : "Focus mode",
-                icon: <IconFocus size={15} />,
+                icon: <IconFocus size={18} />,
                 act: () => setFocusMode((v) => !v),
               },
               {
                 label: "Bookmark this spot",
-                icon: <IconBookmark size={15} />,
+                icon: <IconBookmark size={18} />,
                 act: () => setBookmarkOpen(true),
               },
-              { 
-                label: "Clear all marks", 
-                icon: <IconTrash size={15} />, 
-                act: () => { clearMarks("all"); setMobileMore(false); },
-                disabled: highlights.length === 0 
+              {
+                label: eraserOpen ? "Hide erase menu" : "Erase marks…",
+                icon: <IconEraser size={18} />,
+                act: () => setEraserOpen((v) => !v),
+                disabled: highlights.length === 0,
               },
-              { label: "Undo", icon: <IconUndo size={15} />, act: hist.undo, disabled: !hist.canUndo },
-              { label: "Redo", icon: <IconRedo size={15} />, act: hist.redo, disabled: !hist.canRedo },
-              { label: "Desk settings", icon: <IconGear size={15} />, act: onOpenSettings },
+              { label: "Undo", icon: <IconUndo size={18} />, act: hist.undo, disabled: !hist.canUndo },
+              { label: "Redo", icon: <IconRedo size={18} />, act: hist.redo, disabled: !hist.canRedo },
+              { label: "Desk settings", icon: <IconGear size={18} />, act: onOpenSettings },
               {
                 label: resolvedTheme === "light" ? "Lamplight paper" : "Daylight paper",
-                icon: resolvedTheme === "light" ? <IconMoon size={15} /> : <IconSun size={15} />,
+                icon: resolvedTheme === "light" ? <IconMoon size={18} /> : <IconSun size={18} />,
                 act: onToggleTheme,
               },
             ].map((it) => (
               <button
                 key={it.label}
                 disabled={it.disabled}
-                className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm font-medium text-ink-soft transition-colors hover:bg-[rgba(var(--shadow-ink),0.06)] hover:text-ink disabled:opacity-40"
+                className="flex w-full min-h-[44px] items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium text-ink-soft transition-colors hover:bg-[rgba(var(--shadow-ink),0.06)] hover:text-ink disabled:opacity-40"
                 onClick={() => {
+                  const keepOpen = it.label.includes("Erase");
                   it.act();
-                  setMobileMore(false);
+                  if (!keepOpen) setMobileMore(false);
                 }}
               >
                 {it.icon} {it.label}
               </button>
             ))}
+            {eraserOpen && (
+              <div className="mt-1 border-t border-line pt-1">
+                {[
+                  { type: "highlight" as const, label: "Highlights" },
+                  { type: "underline" as const, label: "Underlines" },
+                  { type: "strikethrough" as const, label: "Strikethroughs" },
+                  { type: "squiggly" as const, label: "Squiggles" },
+                  { type: "box" as const, label: "Boxes" },
+                  { type: "circle" as const, label: "Circles" },
+                ].map((item) => {
+                  const count = highlights.filter((h) => h.type === item.type).length;
+                  return (
+                    <button
+                      key={item.type}
+                      disabled={count === 0}
+                      className="flex w-full min-h-[44px] items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-ink-soft transition-colors hover:bg-[rgba(var(--shadow-ink),0.06)] hover:text-ink disabled:opacity-30"
+                      onClick={() => {
+                        clearMarks(item.type);
+                        setEraserOpen(false);
+                        setMobileMore(false);
+                      }}
+                    >
+                      <span>{item.label}</span>
+                      <span className="text-[0.65rem] text-ink-faint">{count}</span>
+                    </button>
+                  );
+                })}
+                <button
+                  disabled={highlights.length === 0}
+                  className="flex w-full min-h-[44px] items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold text-accent-deep transition-colors hover:bg-[var(--hl-rose)] disabled:opacity-30"
+                  onClick={() => {
+                    clearMarks("all");
+                    setEraserOpen(false);
+                    setMobileMore(false);
+                  }}
+                >
+                  <span>Clear all marks</span>
+                  <span className="text-[0.65rem] opacity-80">{highlights.length}</span>
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -1388,7 +1539,7 @@ export default function DocumentView({
       {!focusMode && bookmarkOpen && (
         <>
           <div className="fixed inset-0 z-[64]" onClick={() => setBookmarkOpen(false)} aria-hidden="true" />
-          <div className="pop fixed right-2 top-14 z-[70] w-[min(92vw,18rem)] rounded-lg border border-line bg-sheet p-3 shadow-[0_18px_40px_-14px_rgba(var(--shadow-ink),0.55)]">
+          <div className="pop fixed inset-x-2 top-[3.1rem] z-[70] rounded-lg border border-line bg-sheet p-3 shadow-[0_18px_40px_-14px_rgba(var(--shadow-ink),0.55)] sm:right-2 sm:left-auto sm:top-14 sm:w-72">
             <p className="font-display text-sm font-bold text-ink">Bookmark this spot</p>
             <p className="mt-0.5 text-[0.68rem] text-ink-faint">
               {isLayout ? `Flags page ${activePage}.` : "Flags your current reading position."}
@@ -1399,15 +1550,15 @@ export default function DocumentView({
               onChange={(e) => setBookmarkLabel(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addBookmark()}
               placeholder={isLayout ? `Page ${activePage}` : activeHeading ?? "Label this spot"}
-              className="mt-2 h-9 w-full rounded-md border border-line bg-transparent px-2.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-accent"
+              className="mt-2 min-h-[44px] w-full rounded-md border border-line bg-transparent px-3 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-accent"
               aria-label="Bookmark label"
             />
-            <div className="mt-2 flex justify-end gap-2">
-              <button className="btn-ghost !px-2.5 !py-1 text-xs" onClick={() => setBookmarkOpen(false)}>
+            <div className="mt-3 flex justify-end gap-2">
+              <button className="btn-ghost !px-3 !py-2 min-h-[44px] text-sm" onClick={() => setBookmarkOpen(false)}>
                 Cancel
               </button>
-              <button className="btn-ink !px-3 !py-1.5 text-xs" onClick={addBookmark}>
-                <IconBookmark size={13} /> Mark it
+              <button className="btn-ink !px-4 !py-2 min-h-[44px] text-sm" onClick={addBookmark}>
+                <IconBookmark size={15} /> Mark it
               </button>
             </div>
           </div>
@@ -1463,8 +1614,8 @@ export default function DocumentView({
                   : "This document was ingested as reflow text only. Re-attach the PDF and every page will be pressed for the layout view."}
               </p>
               {!attaching && (
-                <label className="btn-ink mx-auto mt-5 cursor-pointer">
-                  <IconUpload size={15} /> Choose the PDF
+                <label className="btn-ink mx-auto mt-5 flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-md px-4 text-sm font-semibold">
+                  <IconUpload size={18} /> Choose the PDF
                   <input
                     type="file"
                     accept=".pdf"
@@ -1529,7 +1680,23 @@ export default function DocumentView({
                   <h2 className="mb-4 font-display text-lg font-bold text-ink">Marginalia</h2>
                   <div className="flex flex-col gap-6">
                     {[...marginNotes, ...(isMobile ? freeformNotes : [])].map((n) => (
-                      <StickyNote key={n.id} note={n} snippet={snippetFor(n.id)} onPatch={patchNote} onDelete={deleteNote} />
+                      <div key={n.id} className="relative">
+                        <StickyNote note={n} snippet={snippetFor(n.id)} onPatch={patchNote} onDelete={deleteNote} />
+                        {isMobile && (
+                          <button
+                            className="absolute top-2 right-10 z-40 flex h-9 w-9 items-center justify-center rounded-full border border-line bg-sheet text-ink-soft shadow-sm active:scale-95"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              patchNote(n.id, { placement: n.placement === "margin" ? "freeform" : "margin" });
+                              onToast(`Note moved to ${n.placement === "margin" ? "freeform" : "margin"} placement.`);
+                            }}
+                            title={`Move to ${n.placement === "margin" ? "freeform" : "margin"}`}
+                            aria-label={`Move note to ${n.placement === "margin" ? "freeform" : "margin"}`}
+                          >
+                            {n.placement === "margin" ? <IconMove size={16} /> : <IconRows size={16} />}
+                          </button>
+                        )}
+                      </div>
                     ))}
                     {marginNotes.length === 0 && freeformNotes.length === 0 && (
                       <p className="text-sm italic text-ink-faint">No margin notes yet.</p>
@@ -1609,18 +1776,18 @@ export default function DocumentView({
 
       {!focusMode && (
         <button
-          className="btn-ghost no-print fixed bottom-4 left-4 z-40 !bg-[var(--sheet)] shadow-lg lg:hidden"
+          className="btn-ghost no-print fixed bottom-4 left-4 z-40 flex min-h-[44px] items-center gap-2 !bg-[var(--sheet)] px-4 shadow-lg lg:hidden"
           onClick={() => setRailDrawer(true)}
           aria-label="Open contents and bookmarks"
         >
-          <IconList size={15} /> Contents
+          <IconList size={18} /> Contents
         </button>
       )}
-      
+
       {!focusMode && railDrawer && (
         <div className="no-print fixed inset-0 z-[74] lg:hidden">
           <div className="absolute inset-0 bg-[rgba(var(--shadow-ink),0.4)]" onClick={() => setRailDrawer(false)} />
-          <div className="pop absolute bottom-0 left-0 top-0 w-72 max-w-[85vw] overflow-y-auto border-r border-line bg-[var(--sheet)] shadow-2xl">
+          <div className="pop absolute bottom-0 left-0 top-0 w-[min(85vw,320px)] overflow-y-auto border-r border-line bg-[var(--sheet)] shadow-2xl">
             <TocRail
               forceVisible
               onClose={() => setRailDrawer(false)}
@@ -1665,15 +1832,20 @@ export default function DocumentView({
       {selPayload && !clean && (
         <div
           ref={toolbarRef}
-          className="pop no-print fixed z-[70] flex flex-wrap items-center gap-1 rounded-lg border border-line bg-sheet p-1.5 shadow-[0_14px_34px_-12px_rgba(var(--shadow-ink),0.55)]"
-          style={{ left: tbLeft, top: tbTop, maxWidth: tbWidth }}
+          className="pop no-print fixed z-[70] flex flex-wrap items-center justify-center gap-0.5 sm:gap-1 rounded-lg border border-line bg-sheet p-1 shadow-[0_14px_34px_-12px_rgba(var(--shadow-ink),0.55)]"
+          style={{
+            left: tbLeft,
+            top: tbTop,
+            maxWidth: tbWidth,
+            width: "max-content",
+          }}
           role="toolbar"
           aria-label="Annotation toolbar"
         >
           {MARK_TYPES.map((t) => (
             <button
               key={t.key}
-              className={`icon-btn !h-8 !w-8 ${tool === t.key ? "on" : ""}`}
+              className={`icon-btn !h-8 !w-8 sm:!h-10 sm:!w-10 ${tool === t.key ? "on" : ""}`}
               title={`${t.label} — press “${t.key[0].toUpperCase()}” after selecting`}
               aria-pressed={tool === t.key}
               aria-label={t.label}
@@ -1682,17 +1854,17 @@ export default function DocumentView({
                 if (t.key !== "highlight") applyMark(t.key, lastColor.current);
               }}
             >
-              {MARK_ICON[t.key]({ size: 16 })}
+              {MARK_ICON[t.key]({ size: isMobile ? 14 : 17 })}
             </button>
           ))}
-          <span className="mx-0.5 h-6 w-px bg-line" aria-hidden="true" />
+          <span className="mx-0.5 h-5 sm:h-6 w-px bg-line" aria-hidden="true" />
           {palette.map((c) => {
             const label = settings.highlightLabels[c.key];
             const tip = label ? `${c.label} — ${label}` : c.label;
             return (
               <button
                 key={c.key}
-                className="h-6 w-6 shrink-0 rounded-full border border-[rgba(var(--shadow-ink),0.35)] transition-transform hover:scale-110 active:scale-95"
+                className="h-8 w-8 sm:h-10 sm:w-10 shrink-0 rounded-full border border-[rgba(var(--shadow-ink),0.35)] transition-transform hover:scale-110 active:scale-95"
                 style={{ background: `var(--hl-${c.key})` }}
                 title={`${tip} — apply ${tool}`}
                 aria-label={`Apply ${tip} ${tool}`}
@@ -1700,37 +1872,36 @@ export default function DocumentView({
               />
             );
           })}
-          <span className="mx-0.5 h-6 w-px bg-line" aria-hidden="true" />
-          
+          <span className="mx-0.5 h-5 sm:h-6 w-px bg-line" aria-hidden="true" />
+
           <button
-            className="flex items-center gap-1.5 rounded-md border border-line px-2 py-1.5 text-xs font-semibold text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
+            className="flex min-h-[32px] sm:min-h-[40px] items-center gap-1 sm:gap-1.5 rounded-md border border-line px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-[0.68rem] sm:text-xs font-semibold text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
             onClick={eraseSelection}
             title="Erase marks in selection — press “E”"
           >
-            <IconEraser size={15} className="text-[var(--ink-red-ui, #d33)]" /> Erase
+            <IconEraser size={14} className="text-[var(--ink-red-ui, #d33)]" /> Erase
           </button>
 
-          <span className="mx-0.5 h-6 w-px bg-line" aria-hidden="true" />
           <button
-            className="flex items-center gap-1.5 rounded-md border border-line px-2 py-1.5 text-xs font-semibold text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
+            className="flex min-h-[32px] sm:min-h-[40px] items-center gap-1 sm:gap-1.5 rounded-md border border-line px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-[0.68rem] sm:text-xs font-semibold text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
             onClick={() => attachNote()}
             title="Attach a sticky note — press “N”"
           >
-            <IconNote size={15} className="text-[var(--ink-blue-ui)]" /> Note
+            <IconNote size={14} className="text-[var(--ink-blue-ui)]" /> Note
           </button>
         </div>
       )}
 
       {selectedIds.size > 0 && !clean && (
-        <div className="pop no-print fixed bottom-6 left-1/2 z-[70] flex max-w-[94vw] -translate-x-1/2 flex-wrap items-center gap-2 rounded-lg border border-line bg-sheet px-3 py-2 shadow-[0_18px_40px_-14px_rgba(var(--shadow-ink),0.55)]">
-          <span className="font-display text-sm font-bold text-ink">
+        <div className="pop no-print fixed bottom-4 left-1/2 z-[70] flex w-[calc(100vw-24px)] max-w-md -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 sm:gap-2 rounded-lg border border-line bg-sheet px-2.5 sm:px-3 py-2 sm:py-3 shadow-[0_18px_40px_-14px_rgba(var(--shadow-ink),0.55)] md:bottom-8">
+          <span className="font-display text-xs sm:text-sm font-bold text-ink px-1 sm:px-2">
             {selectedIds.size} mark{selectedIds.size === 1 ? "" : "s"}
           </span>
           <span className="h-5 w-px bg-line" aria-hidden="true" />
           {palette.map((c) => (
             <button
               key={c.key}
-              className="h-6 w-6 rounded-full border border-[rgba(var(--shadow-ink),0.35)] transition-transform hover:scale-110"
+              className="h-8 w-8 sm:h-10 sm:w-10 rounded-full border border-[rgba(var(--shadow-ink),0.35)] transition-transform hover:scale-110 active:scale-95"
               style={{ background: `var(--hl-${c.key})` }}
               title={`Recolor selection ${settings.highlightLabels[c.key] ? `— ${settings.highlightLabels[c.key]}` : ""}`}
               aria-label={`Recolor selection ${c.label}`}
@@ -1739,14 +1910,14 @@ export default function DocumentView({
           ))}
           <span className="h-5 w-px bg-line" aria-hidden="true" />
           <button
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-accent-deep transition-colors hover:bg-[var(--hl-rose)]"
+            className="flex min-h-[36px] sm:min-h-[44px] items-center gap-1.5 sm:gap-2 rounded-md px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-accent-deep transition-colors hover:bg-[var(--hl-rose)]"
             onClick={bulkDelete}
             title="Delete selected marks (Delete key)"
           >
-            <IconTrash size={14} /> Tear up
+            <IconTrash size={15} /> Tear up
           </button>
-          <button className="icon-btn !h-7 !w-7" onClick={() => setSelectedIds(new Set())} aria-label="Clear selection" title="Clear selection (Esc)">
-            <IconX size={14} />
+          <button className="icon-btn !h-9 !w-9 sm:!h-11 sm:!w-11" onClick={() => { setSelectedIds(new Set()); setSelectMode(false); }} aria-label="Clear selection" title="Clear selection (Esc)">
+            <IconX size={16} />
           </button>
         </div>
       )}
@@ -1754,14 +1925,14 @@ export default function DocumentView({
       {markMenu && markMenuHl && (
         <div
           ref={markMenuRef}
-          className="pop no-print fixed z-[70] w-64 rounded-lg border border-line bg-sheet p-2.5 shadow-[0_18px_40px_-14px_rgba(var(--shadow-ink),0.55)]"
-          style={{ left: markMenu.x, top: markMenu.y }}
+          className="pop no-print fixed z-[70] rounded-lg border border-line bg-sheet p-2 sm:p-3 shadow-[0_18px_40px_-14px_rgba(var(--shadow-ink),0.55)]"
+          style={{ left: markMenuLeft, top: markMenuTop, width: markMenuWidth }}
           role="menu"
           aria-label="Mark actions"
         >
           {markMenuHl.anchor.snippet && (
             <p
-              className="mb-2 line-clamp-2 border-l-2 pl-2 text-[0.7rem] italic leading-snug text-ink-soft"
+              className="mb-3 line-clamp-2 border-l-2 pl-3 text-sm italic leading-snug text-ink-soft"
               style={{ borderColor: `var(--hl-${markMenuHl.color}-solid)` }}
             >
               “{markMenuHl.anchor.snippet}”
@@ -1771,11 +1942,11 @@ export default function DocumentView({
             {MARK_TYPES.map((t) => (
               <button
                 key={t.key}
-                className={`icon-btn !h-7 !w-7 ${markMenuHl.type === t.key ? "on" : ""}`}
+                className={`icon-btn !h-8 !w-8 sm:!h-10 sm:!w-10 ${markMenuHl.type === t.key ? "on" : ""}`}
                 title={`Change to ${t.label.toLowerCase()}`}
                 onClick={() => patchMark(markMenuHl.id, { type: t.key })}
               >
-                {MARK_ICON[t.key]({ size: 14 })}
+                {MARK_ICON[t.key]({ size: isMobile ? 14 : 17 })}
               </button>
             ))}
             <span className="mx-0.5 h-5 w-px bg-line" aria-hidden="true" />
@@ -1784,7 +1955,7 @@ export default function DocumentView({
               return (
                 <button
                   key={c.key}
-                  className={`h-5 w-5 rounded-full border transition-transform hover:scale-110 ${
+                  className={`h-8 w-8 sm:h-10 sm:w-10 rounded-full border transition-transform hover:scale-110 active:scale-95 ${
                     markMenuHl.color === c.key ? "border-ink" : "border-[rgba(var(--shadow-ink),0.35)]"
                   }`}
                   style={{ background: `var(--hl-${c.key})` }}
@@ -1795,9 +1966,9 @@ export default function DocumentView({
               );
             })}
           </div>
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-[rgba(var(--shadow-ink),0.12)] pt-2">
+          <div className="mt-3 flex flex-col gap-1.5 border-t border-[rgba(var(--shadow-ink),0.12)] pt-2.5">
             <button
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink-soft transition-colors hover:bg-[rgba(var(--shadow-ink),0.07)] hover:text-ink"
+              className="flex min-h-[40px] sm:min-h-[44px] w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold text-ink-soft transition-colors hover:bg-[rgba(var(--shadow-ink),0.07)] hover:text-ink"
               onClick={() => {
                 if (markMenuNote) {
                   patchNote(markMenuNote.id, { collapsed: false });
@@ -1815,21 +1986,21 @@ export default function DocumentView({
                 }
               }}
             >
-              <IconNote size={14} className="text-[var(--ink-blue-ui)]" />
+              <IconNote size={16} className="text-[var(--ink-blue-ui)]" />
               {markMenuNote ? "Open note" : "Add note"}
             </button>
             <button
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-ink-soft transition-colors hover:bg-[rgba(var(--shadow-ink),0.07)] hover:text-ink"
+              className="flex min-h-[40px] sm:min-h-[44px] w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold text-ink-soft transition-colors hover:bg-[rgba(var(--shadow-ink),0.07)] hover:text-ink"
               onClick={() => void copyCitation(markMenuHl)}
               title="Copy the passage as a citation"
             >
-              <IconQuote size={14} /> Cite
+              <IconQuote size={16} /> Cite
             </button>
             <button
-              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-accent-deep transition-colors hover:bg-[var(--hl-rose)]"
+              className="flex min-h-[40px] sm:min-h-[44px] w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold text-accent-deep transition-colors hover:bg-[var(--hl-rose)]"
               onClick={() => deleteMark(markMenuHl.id)}
             >
-              <IconTrash size={14} /> Remove
+              <IconTrash size={16} /> Remove
             </button>
           </div>
         </div>

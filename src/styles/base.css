@@ -1,0 +1,44 @@
+﻿/* â€”â€”â€”â€”â€” Scrollbars â€”â€”â€”â€”â€” */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+kbd {
+  font-family: var(--font-body);
+  font-size: 0.62rem; font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--paper-deep);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+/* â€”â€”â€”â€”â€” Motion preferences: OS-level AND the manual override â€”â€”â€”â€”â€” */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+/* â€”â€”â€”â€”â€” Print: clean paper output, distinct from the PDF export â€”â€”â€”â€”â€” */
+@media print {
+  .grain-layer, .crease-layer, .vignette-layer,
+  header, .no-print, .pa-connectors, .note-toolbar,
+  .slideover, .slideover-backdrop, aside, .icon-btn, .btn-ghost, .btn-ink { display: none !important; }
+  html, body { height: auto !important; background: #fff !important; }
+  [data-scroller] { overflow: visible !important; height: auto !important; }
+  .paper-sheet { box-shadow: none !important; border-color: #bbb; background: #fff !important; }
+  .pa-note { position: static !important; transform: none !important; box-shadow: none; border: 1px solid #999; break-inside: avoid; margin: 0.6rem 0; }
+  .pa-freenote { position: static !important; width: auto !important; height: auto !important; }
+  .pa-lh { mix-blend-mode: normal; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

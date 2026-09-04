@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
-import type { AnnotationsState, DocumentRecord, ExportFormat } from "../data/types";
-import { exportAnnotatedPdf } from "../lib/pdf";
-import { downloadBlob, safeFileName } from "../lib/store";
-import { IconChevronDown, IconDownload, IconFile, IconHighlighter, IconSpin } from "./icons";
+import type { AnnotationsState, DocumentRecord, ExportFormat } from "../../domain/types";
+import { exportAnnotatedPdf } from "../../lib/pdf";
+import { downloadBlob, safeFileName } from "../../lib/store";
+import { IconChevronDown, IconDownload, IconFile, IconHighlighter, IconSpin } from "../ui/icons";
 
 interface Props {
   doc: DocumentRecord;
